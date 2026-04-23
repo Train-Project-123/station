@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: railway-station-finder-api
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: MONGO_URI
+        sync: false        # you'll paste this in the Render dashboard
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /health
