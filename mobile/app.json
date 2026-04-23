@@ -21,6 +21,8 @@
       }
     },
     "android": {
+      "package": "com.trainproject.stationfinder",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#09090b"
