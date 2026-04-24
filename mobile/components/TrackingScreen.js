@@ -14,6 +14,7 @@ import * as Location from 'expo-location';
 
 import { haversineDistance, formatDistance, isWithinBoundary } from '../utils/haversine';
 import { fetchNearbyStations } from '../utils/api';
+import { getRoadDistance } from '../utils/ors';
 import { useToast } from './Toast';
 import {
   Card,
@@ -61,7 +62,9 @@ export default function TrackingScreen() {
   const [userLocation, setUserLocation] = useState(null);
   const [nearestStation, setNearestStation] = useState(null);
   const [allStations, setAllStations] = useState([]);
-  const [distanceMeters, setDistanceMeters] = useState(null);
+  const [distanceMeters, setDistanceMeters] = useState(null); // Straight-line distance
+  const [roadDistance, setRoadDistance] = useState(null);     // ORS road distance
+  const [roadDuration, setRoadDuration] = useState(null);     // ORS road duration
   const [lastChecked, setLastChecked] = useState(null);
   const [intervalMode, setIntervalMode] = useState(null);
   const [locationError, setLocationError] = useState(null);
@@ -193,7 +196,24 @@ export default function TrackingScreen() {
       setNearestStation(nearest);
       setDistanceMeters(minDist === Infinity ? null : Math.round(minDist));
 
-      const inside = minDist !== Infinity && isWithinBoundary(minDist, BOUNDARY_METERS);
+      // ── Get real road distance for the nearest station ──
+      let actualDistance = minDist;
+      if (nearest) {
+        const sLat = nearest.coordinates?.lat ?? nearest.location?.coordinates?.[1];
+        const sLng = nearest.coordinates?.lng ?? nearest.location?.coordinates?.[0];
+        
+        const roadData = await getRoadDistance(latitude, longitude, sLat, sLng);
+        if (roadData) {
+          setRoadDistance(roadData.distanceMeters);
+          setRoadDuration(roadData.durationSeconds);
+          actualDistance = roadData.distanceMeters; // Use road distance for boundary check if available
+        } else {
+          setRoadDistance(null);
+          setRoadDuration(null);
+        }
+      }
+
+      const inside = actualDistance !== Infinity && isWithinBoundary(actualDistance, BOUNDARY_METERS);
       const prevStatus = currentStatusRef.current;
 
       if (inside) {
@@ -461,7 +481,9 @@ export default function TrackingScreen() {
               <View style={styles.distanceRow}>
                 <Text style={styles.distanceLabel}>Distance to</Text>
                 <Text style={styles.stationNameInline}>{nearestStation.stationName}</Text>
-                <Text style={styles.distanceValue}>{formatDistance(distanceMeters)}</Text>
+                <Text style={styles.distanceValue}>
+                  {roadDistance !== null ? formatDistance(roadDistance) : formatDistance(distanceMeters)}
+                </Text>
               </View>
             )}
 
@@ -537,6 +559,17 @@ export default function TrackingScreen() {
                   value={(nearestStation.coordinates?.lng ?? nearestStation.location?.coordinates?.[0])?.toFixed(6) || 'N/A'} 
                 />
               </View>
+
+              {roadDuration !== null && (
+                <>
+                  <Separator />
+                  <View style={styles.detailGrid}>
+                    <DetailItem label="Road Distance" value={formatDistance(roadDistance)} />
+                    <DetailItem label="Est. Driving Time" value={Math.ceil(roadDuration / 60) + ' min'} />
+                    <DetailItem label="Straight Line" value={formatDistance(distanceMeters)} />
+                  </View>
+                </>
+              )}
 
               {distanceMeters !== null && (
                 <>
@@ -629,7 +662,8 @@ export default function TrackingScreen() {
           </CardHeader>
           <CardContent>
             <InfoRow icon="📍" text="Gets your GPS location via expo-location" />
-            <InfoRow icon="📏" text="Calculates distance using Haversine formula" />
+            <InfoRow icon="🚗" text="Calculates actual road distance using OpenRouteService" />
+            <InfoRow icon="📏" text="Uses Haversine formula as a fallback" />
             <InfoRow icon="🟢" text="Inside 500m → checks every 30 seconds" />
             <InfoRow icon="🟡" text="Outside 500m → checks every 5 minutes" />
             <InfoRow icon="🔔" text="Shows toast notifications on boundary change" />
