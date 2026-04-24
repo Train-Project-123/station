@@ -165,25 +165,13 @@ export default function TrackingScreen() {
       setLastChecked(new Date());
       setLocationError(null);
 
-      // Try backend API first (5km radius), fallback to hardcoded station
       let stations = [];
       try {
         const result = await fetchNearbyStations(latitude, longitude, 5000);
         stations = result.stations || [];
         setAllStations(stations);
       } catch (apiErr) {
-        console.warn('[API] Backend unavailable, using local fallback:', apiErr.message);
-        stations = [
-          {
-            stationName: 'Kakkanchery',
-            stationCode: 'KAKJ',
-            zone: 'Southern Railway',
-            division: 'Palakkad',
-            state: 'Kerala',
-            coordinates: { lat: 11.152122, lng: 75.893304 },
-          },
-        ];
-        setAllStations(stations);
+        console.warn('[API] Backend unavailable:', apiErr.message);
       }
 
       // Haversine distance to every station → find nearest
@@ -540,6 +528,14 @@ export default function TrackingScreen() {
                 <DetailItem label="Division" value={nearestStation.division} />
                 <DetailItem label="State" value={nearestStation.state} />
                 <DetailItem label="Code" value={nearestStation.stationCode} />
+                <DetailItem 
+                  label="Station Lat" 
+                  value={(nearestStation.coordinates?.lat ?? nearestStation.location?.coordinates?.[1])?.toFixed(6) || 'N/A'} 
+                />
+                <DetailItem 
+                  label="Station Lng" 
+                  value={(nearestStation.coordinates?.lng ?? nearestStation.location?.coordinates?.[0])?.toFixed(6) || 'N/A'} 
+                />
               </View>
 
               {distanceMeters !== null && (
