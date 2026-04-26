@@ -36,9 +36,40 @@ export async function fetchNearbyStations(lat, lng, radius = 5000) {
 }
 
 /**
+ * Fetch live station board — trains arriving/departing in the next 2 hours.
+ * Calls: GET /api/stations/:code/live
+ *
+ * @param {string} stationCode - e.g. "KAKJ", "PGI"
+ * @returns {Promise<{stationCode, totalTrains, trains: Array}>}
+ */
+export async function fetchStationLiveBoard(stationCode) {
+  const url = `${API_BASE_URL}/api/stations/${encodeURIComponent(stationCode)}/live`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Live board API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+
+  if (!data.success) {
+    throw new Error(data.message || 'Live board fetch failed');
+  }
+
+  return data;
+}
+
+/**
  * Health check
  */
 export async function healthCheck() {
   const response = await fetch(`${API_BASE_URL}/health`);
   return response.json();
 }
+

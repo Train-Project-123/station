@@ -77,6 +77,105 @@ router.get('/nearby', async (req, res) => {
 });
 
 /**
+ * GET /api/stations/:code/live
+ * Fetches the live station board from RailRadar for the next 2 hours.
+ * Proxies: GET https://api.railradar.org/api/v1/stations/{stationCode}/live?hours=2
+ *
+ * Returns a cleaned list of trains at the station in the next 2 hours with:
+ *   trainNumber, trainName, type, platform, from → to,
+ *   scheduledArrival, scheduledDeparture, expectedArrival, expectedDeparture,
+ *   delay info, and status flags.
+ */
+router.get('/:code/live', async (req, res) => {
+  const stationCode = req.params.code.toUpperCase();
+  const RAIL_RADAR_API = 'https://api.railradar.org';
+  const apiKey = process.env.TRAIN_API;
+
+  if (!apiKey) {
+    return res.status(500).json({
+      success: false,
+      message: 'TRAIN_API key is not configured on the server.',
+    });
+  }
+
+  try {
+    const url = `${RAIL_RADAR_API}/api/v1/stations/${stationCode}/live?hours=2`;
+
+    console.log(`[LIVE BOARD] 🚉 Fetching live board for ${stationCode} → ${url}`);
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`[LIVE BOARD] ❌ RailRadar API error ${response.status}:`, errText);
+      return res.status(response.status).json({
+        success: false,
+        message: `RailRadar API returned ${response.status}.`,
+        detail: errText,
+      });
+    }
+
+    const data = await response.json();
+
+    // Map each train entry to a clean, mobile-friendly shape
+    const trains = (data.trains || []).map((entry) => ({
+      trainNumber: entry.train?.number ?? null,
+      trainName: entry.train?.name ?? null,
+      trainType: entry.train?.type ?? null,
+      from: entry.train?.source?.name ?? null,
+      fromCode: entry.train?.source?.code ?? null,
+      to: entry.train?.destination?.name ?? null,
+      toCode: entry.train?.destination?.code ?? null,
+      platform: entry.platform ?? null,
+      journeyDate: entry.journeyDate ?? null,
+      scheduled: {
+        arrival: entry.schedule?.arrival ?? null,
+        departure: entry.schedule?.departure ?? null,
+      },
+      expected: {
+        arrival: entry.live?.expectedArrival ?? null,
+        departure: entry.live?.expectedDeparture ?? null,
+      },
+      delay: {
+        arrival: entry.live?.arrivalDelayDisplay ?? null,
+        departure: entry.live?.departureDelayDisplay ?? null,
+      },
+      status: {
+        isCancelled: entry.status?.isCancelled ?? false,
+        isDiverted: entry.status?.isDiverted ?? false,
+        hasArrived: entry.status?.hasArrived ?? false,
+        hasDeparted: entry.status?.hasDeparted ?? false,
+        isArrivalCancelled: entry.status?.isArrivalCancelled ?? false,
+        isDepartureCancelled: entry.status?.isDepartureCancelled ?? false,
+      },
+    }));
+
+    console.log(`[LIVE BOARD] ✅ ${trains.length} train(s) found at ${stationCode} in next 2h`);
+
+    return res.json({
+      success: true,
+      stationCode,
+      queryingForNextHours: 2,
+      totalTrains: trains.length,
+      trains,
+    });
+  } catch (err) {
+    console.error('[LIVE BOARD] ❌ Error fetching live board:', err.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch live board from RailRadar.',
+      error: err.message,
+    });
+  }
+});
+
+/**
  * GET /api/stations
  * Returns all stations in database
  */

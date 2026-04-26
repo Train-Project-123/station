@@ -13,7 +13,7 @@ import {
 import * as Location from 'expo-location';
 
 import { haversineDistance, formatDistance, isWithinBoundary } from '../utils/haversine';
-import { fetchNearbyStations } from '../utils/api';
+import { fetchNearbyStations, fetchStationLiveBoard } from '../utils/api';
 import { getRoadDistance } from '../utils/ors';
 import { useToast } from './Toast';
 import {
@@ -68,6 +68,11 @@ export default function TrackingScreen() {
   const [lastChecked, setLastChecked] = useState(null);
   const [intervalMode, setIntervalMode] = useState(null);
   const [locationError, setLocationError] = useState(null);
+
+  // ── Live Board State ──────────────────────────────────────────────────────
+  const [liveBoard, setLiveBoard] = useState(null);        // { totalTrains, trains[] }
+  const [liveBoardLoading, setLiveBoardLoading] = useState(false);
+  const [liveBoardError, setLiveBoardError] = useState(null);
 
   const intervalRef = useRef(null);
   const currentStatusRef = useRef(TRACKING_STATUS.IDLE);
@@ -221,6 +226,21 @@ export default function TrackingScreen() {
           showToast(`You are near ${nearest.stationName}`, 'success');
           setIntervalMode('30s');
           scheduleInterval(INTERVAL_INSIDE);
+
+          // ── Auto-fetch live board when user first enters station ──
+          setLiveBoard(null);
+          setLiveBoardError(null);
+          setLiveBoardLoading(true);
+          fetchStationLiveBoard(nearest.stationCode)
+            .then((data) => {
+              setLiveBoard(data);
+              showToast(`${data.totalTrains} train(s) at ${nearest.stationCode} in next 2h`, 'info');
+            })
+            .catch((err) => {
+              console.warn('[LIVE BOARD]', err.message);
+              setLiveBoardError(err.message);
+            })
+            .finally(() => setLiveBoardLoading(false));
         }
         setTrackingStatus(TRACKING_STATUS.INSIDE);
         currentStatusRef.current = TRACKING_STATUS.INSIDE;
@@ -229,6 +249,9 @@ export default function TrackingScreen() {
           showToast('You are outside the boundary', 'warning');
           setIntervalMode('5min');
           scheduleInterval(INTERVAL_OUTSIDE);
+          // Clear live board when leaving station
+          setLiveBoard(null);
+          setLiveBoardError(null);
         } else if (prevStatus === TRACKING_STATUS.LOADING) {
           showToast('You are outside the boundary', 'warning');
           setIntervalMode('5min');
@@ -596,6 +619,52 @@ export default function TrackingScreen() {
           </Card>
         )}
 
+        {/* ── LIVE BOARD CARD — shown only when inside station boundary ── */}
+        {(liveBoardLoading || liveBoard || liveBoardError) && (
+          <Card style={styles.card}>
+            <CardHeader>
+              <View style={styles.statusRow}>
+                <Text style={styles.sectionLabel}>🚂 Live Board — Next 2 Hours</Text>
+                {liveBoardLoading && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={[styles.liveDot, { backgroundColor: '#6366f1' }]} />
+                    <Text style={{ color: '#a1a1aa', fontSize: 12 }}>Fetching...</Text>
+                  </View>
+                )}
+                {liveBoard && !liveBoardLoading && (
+                  <Badge label={`${liveBoard.totalTrains} trains`} variant="primary" />
+                )}
+              </View>
+            </CardHeader>
+            <CardContent>
+              {liveBoardLoading && (
+                <View style={{ gap: 12 }}>
+                  <Skeleton height={56} />
+                  <Skeleton height={56} />
+                  <Skeleton height={56} />
+                </View>
+              )}
+
+              {liveBoardError && !liveBoardLoading && (
+                <View style={styles.liveBoardError}>
+                  <Text style={styles.errorTitle}>⚠️ Could not load live board</Text>
+                  <Text style={styles.errorText}>{liveBoardError}</Text>
+                </View>
+              )}
+
+              {liveBoard && !liveBoardLoading && liveBoard.trains.length === 0 && (
+                <Text style={{ color: '#71717a', textAlign: 'center', paddingVertical: 16 }}>
+                  No trains scheduled at this station in the next 2 hours.
+                </Text>
+              )}
+
+              {liveBoard && !liveBoardLoading && liveBoard.trains.map((train, idx) => (
+                <LiveTrainRow key={`${train.trainNumber}-${idx}`} train={train} />
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
         {/* ── LOCATION DEBUG CARD ── */}
         {userLocation && (
           <Card style={styles.card}>
@@ -677,6 +746,53 @@ export default function TrackingScreen() {
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
+
+function LiveTrainRow({ train }) {
+  const isCancelled = train.status?.isCancelled || train.status?.isArrivalCancelled;
+  const isDiverted = train.status?.isDiverted;
+  const hasArrived = train.status?.hasArrived;
+  const hasDeparted = train.status?.hasDeparted;
+
+  let statusLabel = 'Scheduled';
+  let statusColor = '#a1a1aa';
+  if (isCancelled) { statusLabel = 'Cancelled'; statusColor = '#ef4444'; }
+  else if (hasDeparted) { statusLabel = 'Departed'; statusColor = '#71717a'; }
+  else if (hasArrived) { statusLabel = 'Arrived'; statusColor = '#4ade80'; }
+  else if (isDiverted) { statusLabel = 'Diverted'; statusColor = '#f59e0b'; }
+  else if (train.delay?.arrival && train.delay.arrival !== '0 min') { statusLabel = 'Delayed'; statusColor = '#fb923c'; }
+
+  return (
+    <View style={styles.liveBoardRow}>
+      {/* Train number + name */}
+      <View style={styles.liveBoardLeft}>
+        <Text style={styles.liveBoardTrainNum}>{train.trainNumber}</Text>
+        <Text style={styles.liveBoardTrainName} numberOfLines={1}>{train.trainName ?? '—'}</Text>
+        <Text style={styles.liveBoardRoute} numberOfLines={1}>
+          {train.fromCode ?? '?'} → {train.toCode ?? '?'}
+        </Text>
+      </View>
+
+      {/* Times + status */}
+      <View style={styles.liveBoardRight}>
+        <View style={styles.liveBoardTimeRow}>
+          <Text style={styles.liveBoardTimeLabel}>Arr</Text>
+          <Text style={styles.liveBoardTime}>{train.expected?.arrival ?? train.scheduled?.arrival ?? '—'}</Text>
+        </View>
+        <View style={styles.liveBoardTimeRow}>
+          <Text style={styles.liveBoardTimeLabel}>Dep</Text>
+          <Text style={styles.liveBoardTime}>{train.expected?.departure ?? train.scheduled?.departure ?? '—'}</Text>
+        </View>
+        {train.platform && (
+          <Text style={styles.liveBoardPlatform}>PF {train.platform}</Text>
+        )}
+        <Text style={[styles.liveBoardStatus, { color: statusColor }]}>{statusLabel}</Text>
+        {train.delay?.arrival && train.delay.arrival !== '0 min' && !isCancelled && (
+          <Text style={styles.liveBoardDelay}>+{train.delay.arrival}</Text>
+        )}
+      </View>
+    </View>
+  );
+}
 function DetailItem({ label, value }) {
   return (
     <View style={styles.detailItem}>
@@ -1023,4 +1139,81 @@ const styles = StyleSheet.create({
   },
   infoIcon: { fontSize: 16, width: 24 },
   infoText: { flex: 1, fontSize: 14, color: '#a1a1aa', lineHeight: 20 },
+
+  // ── Live Board ──────────────────────────────────────────────────────────────
+  liveBoardRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
+    gap: 8,
+  },
+  liveBoardLeft: {
+    flex: 1,
+    gap: 3,
+  },
+  liveBoardTrainNum: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#fafafa',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  liveBoardTrainName: {
+    fontSize: 13,
+    color: '#d4d4d8',
+    fontWeight: '600',
+  },
+  liveBoardRoute: {
+    fontSize: 12,
+    color: '#71717a',
+  },
+  liveBoardRight: {
+    alignItems: 'flex-end',
+    gap: 3,
+    minWidth: 100,
+  },
+  liveBoardTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  liveBoardTimeLabel: {
+    fontSize: 11,
+    color: '#52525b',
+    width: 24,
+    fontWeight: '600',
+  },
+  liveBoardTime: {
+    fontSize: 13,
+    color: '#a1a1aa',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontWeight: '600',
+  },
+  liveBoardPlatform: {
+    fontSize: 11,
+    color: '#6366f1',
+    fontWeight: '700',
+    backgroundColor: '#1e1b4b',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  liveBoardStatus: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  liveBoardDelay: {
+    fontSize: 11,
+    color: '#fb923c',
+    fontWeight: '600',
+  },
+  liveBoardError: {
+    paddingVertical: 12,
+  },
 });
+
