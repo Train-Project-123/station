@@ -121,10 +121,11 @@ router.get('/:code/live', async (req, res) => {
       });
     }
 
-    const data = await response.json();
+    const json = await response.json();
+    const board = json.data ?? json; // RailRadar wraps response in { success, data: {...} }
 
     // Map each train entry to a clean, mobile-friendly shape
-    const trains = (data.trains || []).map((entry) => ({
+    const trains = (board.trains || []).map((entry) => ({
       trainNumber: entry.train?.number ?? null,
       trainName: entry.train?.name ?? null,
       trainType: entry.train?.type ?? null,
