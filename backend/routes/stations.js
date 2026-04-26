@@ -105,7 +105,7 @@ router.get('/:code/live', async (req, res) => {
 
     const response = await fetch(url, {
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        'X-API-Key': apiKey,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
