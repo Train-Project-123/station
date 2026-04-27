@@ -144,6 +144,8 @@ export default function TrackingScreen() {
 
   // ── Shake Detection ───────────────────────────────────────────────────────
   useEffect(() => {
+    if (Platform.OS === 'web') return; // Accelerometer not supported on web
+
     let subscription = null;
     
     // Check accelerometer every 100ms
@@ -171,14 +173,15 @@ export default function TrackingScreen() {
 
   // ── Animations ────────────────────────────────────────────────────────────
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(40)).current;
+  const fadeAnim = useRef(new Animated.Value(Platform.OS === 'web' ? 1 : 0)).current;
+  const slideAnim = useRef(new Animated.Value(Platform.OS === 'web' ? 0 : 40)).current;
 
   // Fade-in permission screen on mount
   useEffect(() => {
+    const useNativeDriver = Platform.OS !== 'web';
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
-      Animated.spring(slideAnim, { toValue: 0, tension: 80, friction: 10, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver }),
+      Animated.spring(slideAnim, { toValue: 0, tension: 80, friction: 10, useNativeDriver }),
     ]).start();
     
     // Poll for matched train from background task
@@ -270,10 +273,11 @@ export default function TrackingScreen() {
   // ── Pulse animation while tracking ───────────────────────────────────────
   useEffect(() => {
     if (isTracking) {
+      const useNativeDriver = Platform.OS !== 'web';
       Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.3, duration: 700, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1.3, duration: 700, useNativeDriver }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver }),
         ])
       ).start();
     } else {
@@ -1024,11 +1028,18 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   permBtnPrimary: {
-    shadowColor: '#6366f1',
-    shadowOpacity: 0.4,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 12,
-    elevation: 6,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)',
+      },
+      default: {
+        shadowColor: '#6366f1',
+        shadowOpacity: 0.4,
+        shadowOffset: { width: 0, height: 4 },
+        shadowRadius: 12,
+        elevation: 6,
+      }
+    })
   },
   appBadge: {
     paddingHorizontal: 16,
@@ -1674,6 +1685,11 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.75)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 10,
+    ...Platform.select({
+      web: {
+        textShadow: '0 2px 10px rgba(0,0,0,0.75)'
+      }
+    })
   },
   introLine: {
     width: 60,

@@ -140,11 +140,18 @@ const styles = StyleSheet.create({
     borderWidth: 0.5,
     gap: 10,
     width: '100%',
-    shadowColor: '#000',
-    shadowOpacity: 0.4,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 10,
-    elevation: 8,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 4px 10px rgba(0, 0, 0, 0.4)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOpacity: 0.4,
+        shadowOffset: { width: 0, height: 4 },
+        shadowRadius: 10,
+        elevation: 8,
+      }
+    })
   },
   indicator: {
     position: 'absolute',
