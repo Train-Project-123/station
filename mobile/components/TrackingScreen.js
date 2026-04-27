@@ -90,6 +90,29 @@ export default function TrackingScreen() {
   // ── Navigation State ──────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState('track'); // 'track', 'speed', 'history', 'settings'
   const [liveSpeed, setLiveSpeed] = useState(0);
+  const [tripHistory, setTripHistory] = useState([]);
+
+  // ── Load History on Mount ──────────────────────────────────────────────────
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('trip_history');
+        if (stored) setTripHistory(JSON.parse(stored));
+      } catch (err) {}
+    };
+    loadHistory();
+  }, []);
+
+  // ── Save to History Function ──────────────────────────────────────────────
+  const addToHistory = async (trip) => {
+    try {
+      const stored = await AsyncStorage.getItem('trip_history');
+      const currentHistory = stored ? JSON.parse(stored) : [];
+      const newHistory = [trip, ...currentHistory.slice(0, 19)]; // Keep last 20
+      setTripHistory(newHistory);
+      await AsyncStorage.setItem('trip_history', JSON.stringify(newHistory));
+    } catch (err) {}
+  };
 
   // ── Dynamic Speed Watcher ─────────────────────────────────────────────────
   useEffect(() => {
@@ -165,12 +188,27 @@ export default function TrackingScreen() {
       try {
         const dataStr = await AsyncStorage.getItem('matched_train_result');
         if (dataStr) {
-          setMatchedTrainData(JSON.parse(dataStr));
+          const data = JSON.parse(dataStr);
+          setMatchedTrainData(data);
+          
+          // If this is a new match, add to history
+          const lastId = await AsyncStorage.getItem('last_history_id');
+          if (data.trainNumber !== lastId) {
+            addToHistory({
+              id: Date.now().toString(),
+              trainName: data.trainName,
+              trainNumber: data.trainNumber,
+              date: new Date().toLocaleDateString(),
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              route: `${data.source} → ${data.destination}`
+            });
+            await AsyncStorage.setItem('last_history_id', data.trainNumber);
+          }
         }
       } catch (err) {}
     }, 5000);
     return () => clearInterval(pollInterval);
-  }, []);
+  }, [tripHistory]);
 
   // ── STEP 1: Check existing permission on app open ─────────────────────────
   useEffect(() => {
@@ -710,8 +748,26 @@ export default function TrackingScreen() {
         {activeTab === 'history' && (
           <View style={styles.tabContent}>
             <View style={styles.minimalCard}>
-              <Text style={styles.minimalLabel}>RECENT TRIPS</Text>
-              <Text style={styles.emptyText}>Your confirmed train journeys will appear here.</Text>
+              <Text style={styles.minimalLabel}>JOURNEY HISTORY</Text>
+              {tripHistory.length === 0 ? (
+                <Text style={styles.emptyText}>No recent trips detected yet.</Text>
+              ) : (
+                tripHistory.map((trip) => (
+                  <View key={trip.id} style={styles.historyItem}>
+                    <View style={styles.historyIcon}>
+                      <Ionicons name="train-outline" size={20} color="#10b981" />
+                    </View>
+                    <View style={styles.historyInfo}>
+                      <Text style={styles.historyTrain}>{trip.trainName}</Text>
+                      <Text style={styles.historyRoute}>{trip.route}</Text>
+                    </View>
+                    <View style={styles.historyMeta}>
+                      <Text style={styles.historyDate}>{trip.date}</Text>
+                      <Text style={styles.historyTime}>{trip.time}</Text>
+                    </View>
+                  </View>
+                ))
+              )}
             </View>
           </View>
         )}
@@ -1393,6 +1449,48 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 12,
     fontWeight: '600',
+  },
+  historyItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  historyIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  historyInfo: {
+    flex: 1,
+  },
+  historyTrain: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  historyRoute: {
+    color: '#71717a',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  historyMeta: {
+    alignItems: 'flex-end',
+  },
+  historyDate: {
+    color: '#10b981',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  historyTime: {
+    color: '#3f3f46',
+    fontSize: 10,
+    marginTop: 2,
   },
   emptyText: {
     fontSize: 14,
