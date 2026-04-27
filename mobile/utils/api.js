@@ -96,3 +96,44 @@ export async function matchTrain(locations) {
   return response.json();
 }
 
+/**
+ * Save a journey to the cloud history
+ */
+export async function syncTripWithCloud(trip) {
+  const url = `${API_BASE_URL}/api/history`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(trip),
+  });
+
+  if (!response.ok) {
+    throw new Error('Cloud sync failed');
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetch all journeys from cloud history
+ */
+export async function fetchCloudHistory() {
+  const url = `${API_BASE_URL}/api/history`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch cloud history');
+  }
+
+  return response.json();
+}
+

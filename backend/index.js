@@ -5,6 +5,7 @@ const cors = require('cors');
 
 const stationRoutes = require('./routes/stations');
 const trainRoutes = require('./routes/trains');
+const historyRoutes = require('./routes/history');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -26,6 +27,7 @@ app.get('/health', (req, res) => {
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/stations', stationRoutes);
 app.use('/api/trains', trainRoutes);
+app.use('/api/history', historyRoutes);
 
 // ─── 404 Handler ──────────────────────────────────────────────────────────────
 app.use((req, res) => {
