@@ -1,4 +1,4 @@
-# 🚉 Indian Railway Station Finder — TEST BUILD
+# 🚉 Thirakkundo — TEST BUILD
 
 Geo-detection test app for Indian Railway stations using Expo React Native + Node.js + MongoDB.
 

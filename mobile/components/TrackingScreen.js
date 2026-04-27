@@ -453,7 +453,7 @@ export default function TrackingScreen() {
             <View style={styles.splashIcon}>
               <Text style={styles.splashEmoji}>🚉</Text>
             </View>
-            <Text style={styles.splashTitle}>Station Finder</Text>
+            <Text style={styles.splashTitle}>Thirakkundo</Text>
             <Text style={styles.splashSub}>Checking permissions...</Text>
           </Animated.View>
         </View>
@@ -571,7 +571,7 @@ export default function TrackingScreen() {
 
           {/* App badge */}
           <View style={styles.appBadge}>
-            <Text style={styles.appBadgeText}><Ionicons name="train" size={12} color="#a1a1aa" />  Railway Station Finder · TEST BUILD</Text>
+            <Text style={styles.appBadgeText}><Ionicons name="train" size={12} color="#a1a1aa" />  Thirakkundo · TEST BUILD</Text>
           </View>
         </Animated.View>
       </SafeAreaView>
@@ -600,7 +600,7 @@ export default function TrackingScreen() {
         {/* ── HEADER ── */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <Text style={styles.appTitle}>Station Finder</Text>
+            <Text style={styles.appTitle}>Thirakkundo</Text>
             <Text style={styles.appSubtitle}>Smart Auto-Detection</Text>
           </View>
           <View style={styles.headerRight}>

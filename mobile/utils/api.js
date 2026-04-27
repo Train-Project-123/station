@@ -1,5 +1,5 @@
 /**
- * API client for Railway Station Finder backend
+ * API client for Thirakkundo backend
  * Live backend hosted on Render
  */
 

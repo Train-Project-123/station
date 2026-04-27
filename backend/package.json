@@ -1,7 +1,7 @@
 {
   "name": "railway-station-finder-backend",
   "version": "1.0.0",
-  "description": "Indian Railway Station Finder - Geo Detection Backend",
+  "description": "Thirakkundo - Geo Detection Backend",
   "main": "index.js",
   "engines": {
     "node": ">=18.0.0"
