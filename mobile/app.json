@@ -31,6 +31,9 @@
       "permissions": [
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_BACKGROUND_LOCATION"
       ]
     },
@@ -50,6 +53,12 @@
         "projectId": "bb837041-12c5-4b81-8793-3eac5ef144c2"
       }
     },
-    "owner": "nithin_das"
+    "owner": "nithin_das",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/bb837041-12c5-4b81-8793-3eac5ef144c2"
+    }
   }
 }
