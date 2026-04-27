@@ -9,13 +9,20 @@ import {
   StyleSheet,
   Platform,
   Linking,
+  TouchableOpacity,
+  Image,
 } from 'react-native';
 import * as Location from 'expo-location';
+import { Ionicons } from '@expo/vector-icons';
+import { Accelerometer } from 'expo-sensors';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { BACKGROUND_LOCATION_TASK } from '../utils/backgroundTask';
 
 import { haversineDistance, formatDistance, isWithinBoundary } from '../utils/haversine';
 import { fetchNearbyStations, fetchStationLiveBoard } from '../utils/api';
 import { getRoadDistance } from '../utils/ors';
 import { useToast } from './Toast';
+import Intro3D from './Intro3D';
 import {
   Card,
   CardHeader,
@@ -53,6 +60,11 @@ const TRACKING_STATUS = {
 export default function TrackingScreen() {
   const { showToast } = useToast();
 
+  // ── 3D Intro State ──────────────────────────────────────────────────────
+  const [showIntro, setShowIntro] = useState(true);
+
+  // ── Permission Gate State ─────────────────────────────────────────────────
+
   // ── Permission Gate State ─────────────────────────────────────────────────
   const [permissionStatus, setPermissionStatus] = useState(PERMISSION_STATUS.CHECKING);
 
@@ -73,6 +85,65 @@ export default function TrackingScreen() {
   const [liveBoard, setLiveBoard] = useState(null);        // { totalTrains, trains[] }
   const [liveBoardLoading, setLiveBoardLoading] = useState(false);
   const [liveBoardError, setLiveBoardError] = useState(null);
+  const [matchedTrainData, setMatchedTrainData] = useState(null);
+  
+  // ── Navigation State ──────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState('track'); // 'track', 'speed', 'history', 'settings'
+  const [liveSpeed, setLiveSpeed] = useState(0);
+
+  // ── Dynamic Speed Watcher ─────────────────────────────────────────────────
+  useEffect(() => {
+    let subscription = null;
+    if (activeTab === 'speed') {
+      (async () => {
+        const { status } = await Location.getForegroundPermissionsAsync();
+        if (status === 'granted') {
+          subscription = await Location.watchPositionAsync(
+            { 
+              accuracy: Location.Accuracy.BestForNavigation, 
+              distanceInterval: 0,
+              timeInterval: 500 
+            },
+            (location) => {
+              if (location.coords.speed !== null && location.coords.speed >= 0) {
+                // Convert m/s to km/h
+                setLiveSpeed(location.coords.speed * 3.6);
+              }
+            }
+          );
+        }
+      })();
+    }
+    return () => {
+      if (subscription) {
+        subscription.remove();
+      }
+    };
+  }, [activeTab]);
+
+  // ── Shake Detection ───────────────────────────────────────────────────────
+  useEffect(() => {
+    let subscription = null;
+    
+    // Check accelerometer every 100ms
+    Accelerometer.setUpdateInterval(100);
+
+    subscription = Accelerometer.addListener(({ x, y, z }) => {
+      // Calculate magnitude of acceleration vector (1g is resting gravity)
+      const force = Math.sqrt(x * x + y * y + z * z);
+      
+      // If force exceeds 2.0g, it's a solid shake
+      if (force > 2.0 && activeTab !== 'speed') {
+        setActiveTab('speed');
+      }
+    });
+
+    return () => {
+      if (subscription) {
+        subscription.remove();
+      }
+    };
+  }, [activeTab]);
 
   const intervalRef = useRef(null);
   const currentStatusRef = useRef(TRACKING_STATUS.IDLE);
@@ -88,6 +159,17 @@ export default function TrackingScreen() {
       Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
       Animated.spring(slideAnim, { toValue: 0, tension: 80, friction: 10, useNativeDriver: true }),
     ]).start();
+    
+    // Poll for matched train from background task
+    const pollInterval = setInterval(async () => {
+      try {
+        const dataStr = await AsyncStorage.getItem('matched_train_result');
+        if (dataStr) {
+          setMatchedTrainData(JSON.parse(dataStr));
+        }
+      } catch (err) {}
+    }, 5000);
+    return () => clearInterval(pollInterval);
   }, []);
 
   // ── STEP 1: Check existing permission on app open ─────────────────────────
@@ -100,14 +182,13 @@ export default function TrackingScreen() {
       const { status } = await Location.getForegroundPermissionsAsync();
 
       if (status === 'granted') {
-        // Already allowed — skip the prompt screen and go straight to tracking
+       
         setPermissionStatus(PERMISSION_STATUS.GRANTED);
-        beginTracking(); // auto-start
+        beginTracking(); 
       } else if (status === 'denied') {
-        // Previously denied permanently
+       
         setPermissionStatus(PERMISSION_STATUS.BLOCKED);
       } else {
-        // 'undetermined' — show our permission prompt screen
         setPermissionStatus(PERMISSION_STATUS.PROMPT);
       }
     } catch {
@@ -121,6 +202,9 @@ export default function TrackingScreen() {
       const { status, canAskAgain } = await Location.requestForegroundPermissionsAsync();
 
       if (status === 'granted') {
+        // Also request background permission
+        await Location.requestBackgroundPermissionsAsync();
+        
         setPermissionStatus(PERMISSION_STATUS.GRANTED);
         showToast('Location access granted!', 'success');
         beginTracking(); // auto-start tracking immediately
@@ -245,14 +329,7 @@ export default function TrackingScreen() {
         setTrackingStatus(TRACKING_STATUS.INSIDE);
         currentStatusRef.current = TRACKING_STATUS.INSIDE;
       } else {
-        if (prevStatus === TRACKING_STATUS.INSIDE) {
-          showToast('You are outside the boundary', 'warning');
-          setIntervalMode('5min');
-          scheduleInterval(INTERVAL_OUTSIDE);
-          // Clear live board when leaving station
-          setLiveBoard(null);
-          setLiveBoardError(null);
-        } else if (prevStatus === TRACKING_STATUS.LOADING) {
+        if (prevStatus === TRACKING_STATUS.INSIDE || prevStatus === TRACKING_STATUS.LOADING) {
           showToast('You are outside the boundary', 'warning');
           setIntervalMode('5min');
           scheduleInterval(INTERVAL_OUTSIDE);
@@ -283,6 +360,17 @@ export default function TrackingScreen() {
     currentStatusRef.current = TRACKING_STATUS.LOADING;
     setIsTracking(true);
     setLocationError(null);
+    
+    try {
+      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+        accuracy: Location.Accuracy.Balanced,
+        distanceInterval: 50, // Only trigger if moved 50 meters
+        showsBackgroundLocationIndicator: true,
+      });
+    } catch (e) {
+      console.log('Background location start error:', e);
+    }
+    
     await checkLocation();
     showToast('Location fetched successfully', 'info');
   }, [checkLocation, showToast]);
@@ -299,6 +387,11 @@ export default function TrackingScreen() {
       intervalRef.current = null;
     }
     setIsTracking(false);
+    
+    Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).then((hasStarted) => {
+      if (hasStarted) Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    });
+
     setTrackingStatus(TRACKING_STATUS.IDLE);
     currentStatusRef.current = TRACKING_STATUS.IDLE;
     setIntervalMode(null);
@@ -311,6 +404,11 @@ export default function TrackingScreen() {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, []);
+
+  // ─── RENDER: Real-time 3D Intro ──────────────────────────────────────────
+  if (showIntro) {
+    return <Intro3D onFinish={() => setShowIntro(false)} />;
+  }
 
   // ─── RENDER: Permission checking splash ────────────────────────────────────
   if (permissionStatus === PERMISSION_STATUS.CHECKING) {
@@ -440,7 +538,7 @@ export default function TrackingScreen() {
 
           {/* App badge */}
           <View style={styles.appBadge}>
-            <Text style={styles.appBadgeText}>🚉 Railway Station Finder · TEST BUILD</Text>
+            <Text style={styles.appBadgeText}><Ionicons name="train" size={12} color="#a1a1aa" />  Railway Station Finder · TEST BUILD</Text>
           </View>
         </Animated.View>
       </SafeAreaView>
@@ -469,278 +567,195 @@ export default function TrackingScreen() {
         {/* ── HEADER ── */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <Text style={styles.appTitle}>🚉 Station Finder</Text>
-            <Text style={styles.appSubtitle}>Indian Railway Geo Tracker</Text>
+            <Text style={styles.appTitle}>Station Finder</Text>
+            <Text style={styles.appSubtitle}>Smart Auto-Detection</Text>
           </View>
           <View style={styles.headerRight}>
-            <Badge label="TEST" variant="primary" />
             <View style={styles.locationGrantedPill}>
-              <View style={styles.greenDot} />
-              <Text style={styles.locationGrantedText}>GPS On</Text>
+              <View style={[styles.greenDot, isTracking ? { backgroundColor: '#10b981' } : { backgroundColor: '#71717a' }]} />
+              <Text style={[styles.locationGrantedText, isTracking ? { color: '#10b981' } : { color: '#a1a1aa' }]}>
+                {isTracking ? 'Live' : 'Paused'}
+              </Text>
             </View>
           </View>
         </View>
 
-        <Separator />
-
-        {/* ── STATUS CARD ── */}
-        <Card style={styles.card}>
-          <CardHeader>
-            <View style={styles.statusRow}>
-              <Text style={styles.sectionLabel}>Tracking Status</Text>
-              {isTracking && (
-                <Animated.View
-                  style={[styles.liveDot, { backgroundColor: sc.dot, transform: [{ scale: pulseAnim }] }]}
-                />
-              )}
-            </View>
-          </CardHeader>
-          <CardContent>
-            <View style={[styles.statusBanner, { backgroundColor: sc.bg, borderColor: sc.dot }]}>
-              <Text style={[styles.statusText, { color: sc.color }]}>{sc.label}</Text>
-            </View>
-
-            {distanceMeters !== null && nearestStation && (
-              <View style={styles.distanceRow}>
-                <Text style={styles.distanceLabel}>Distance to</Text>
-                <Text style={styles.stationNameInline}>{nearestStation.stationName}</Text>
-                <Text style={styles.distanceValue}>
-                  {roadDistance !== null ? formatDistance(roadDistance) : formatDistance(distanceMeters)}
+        {activeTab === 'track' && (
+          <View style={styles.tabContent}>
+            {matchedTrainData && (
+              <View style={styles.premiumCard}>
+                <View style={styles.premiumHeader}>
+                  <Ionicons name="train" size={28} color="#10b981" style={{ marginRight: 8 }} />
+                  <Text style={styles.premiumTitle}>Train Detected</Text>
+                </View>
+                <Text style={styles.premiumText}>
+                  You're currently traveling on <Text style={styles.boldText}>{matchedTrainData.train.trainNumber} - {matchedTrainData.train.trainName}</Text> from {matchedTrainData.departureStation}.
                 </Text>
+                <TouchableOpacity 
+                  style={styles.premiumButton}
+                  onPress={() => {
+                    showToast('Boarding Confirmed!', 'success');
+                    setMatchedTrainData(null);
+                    AsyncStorage.removeItem('matched_train_result');
+                  }}
+                >
+                  <Text style={styles.premiumButtonText}>Confirm Boarding</Text>
+                </TouchableOpacity>
               </View>
             )}
 
-            <View style={styles.thresholdInfo}>
-              <Text style={styles.thresholdText}>
-                Boundary threshold: <Text style={styles.thresholdValue}>500 m</Text>
+            {/* Main Action Area */}
+            <View style={styles.actionContainer}>
+              <TouchableOpacity 
+                style={[styles.mainActionButton, isTracking ? styles.mainActionStop : styles.mainActionStart]}
+                onPress={isTracking ? stopTracking : startTracking}
+                disabled={trackingStatus === TRACKING_STATUS.LOADING}
+              >
+                {trackingStatus === TRACKING_STATUS.LOADING ? (
+                  <Text style={[styles.mainActionText, isTracking && { color: '#fff' }]}>Loading...</Text>
+                ) : (
+                  <Text style={[styles.mainActionText, isTracking && { color: '#fff' }]}>{isTracking ? 'Stop Tracking' : 'Start Tracking'}</Text>
+                )}
+              </TouchableOpacity>
+              <View style={styles.statusMinimalWrapper}>
+                <Text style={styles.statusMinimalText}>{sc.label}</Text>
+              </View>
+            </View>
+
+            {nearestStation && distanceMeters !== null && (
+              <View style={styles.minimalCard}>
+                <View style={styles.minimalRow}>
+                  <View>
+                    <Text style={styles.minimalLabel}>NEAREST STATION</Text>
+                    <Text style={styles.minimalValue}>{nearestStation.stationName}</Text>
+                    <Text style={styles.minimalSub}>{nearestStation.stationCode}</Text>
+                  </View>
+                  <View style={styles.minimalRight}>
+                    <Text style={styles.minimalDistance}>
+                      {roadDistance !== null ? formatDistance(roadDistance) : formatDistance(distanceMeters)}
+                    </Text>
+                    <Text style={[styles.minimalStatus, (distanceMeters !== null && distanceMeters <= BOUNDARY_METERS) ? {color: '#10b981'} : {color: '#f59e0b'}]}>
+                      {(distanceMeters !== null && distanceMeters <= BOUNDARY_METERS) ? 'In Range' : 'Out of Range'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {(liveBoardLoading || liveBoard || liveBoardError) && (
+              <View style={styles.minimalCard}>
+                <View style={styles.minimalHeader}>
+                  <Text style={styles.minimalLabel}>LIVE DEPARTURES</Text>
+                  {liveBoardLoading && <Text style={styles.minimalSub}>Updating...</Text>}
+                </View>
+                
+                {liveBoardError && (
+                  <Text style={styles.errorTextMinimal}>{liveBoardError}</Text>
+                )}
+                
+                {liveBoard && !liveBoardLoading && liveBoard.trains.length === 0 && (
+                  <Text style={styles.emptyText}>No trains in next 2 hours.</Text>
+                )}
+
+                {liveBoard && !liveBoardLoading && liveBoard.trains.slice(0, 3).map((train, idx) => (
+                  <View key={idx} style={styles.trainRowMinimal}>
+                    <View style={styles.trainRowLeft}>
+                      <Text style={styles.trainNumText}>{train.trainNumber}</Text>
+                      <Text style={styles.trainDestText}>{train.toCode || 'Unknown'}</Text>
+                    </View>
+                    <View style={styles.trainRowRight}>
+                      <Text style={styles.trainTimeText}>{train.expected?.departure || train.scheduled?.departure || '--:--'}</Text>
+                      {train.delay?.departure && train.delay.departure !== '0 min' && (
+                        <Text style={styles.trainDelayText}>+{train.delay.departure}</Text>
+                      )}
+                    </View>
+                  </View>
+                ))}
+                {liveBoard && liveBoard.trains.length > 3 && (
+                  <Text style={styles.moreText}>+{liveBoard.trains.length - 3} more trains</Text>
+                )}
+              </View>
+            )}
+          </View>
+        )}
+
+        {activeTab === 'speed' && (
+          <View style={styles.tabContent}>
+            <View style={[styles.minimalCard, { alignItems: 'center', paddingVertical: 50, marginTop: 20 }]}>
+              <View style={styles.speedCircle}>
+                <Text style={styles.minimalLabel}>CURRENT SPEED</Text>
+                <View style={styles.speedValueRow}>
+                  <Text style={styles.speedValueMain}>
+                    {Math.round(liveSpeed)}
+                  </Text>
+                  <Text style={styles.speedUnit}>KM/H</Text>
+                </View>
+                <View style={styles.speedIndicatorBar}>
+                  <View style={[styles.speedIndicatorFill, { width: `${Math.min(liveSpeed, 120) / 1.2}%` }]} />
+                </View>
+              </View>
+              
+              <View style={styles.accuracyNote}>
+                <Ionicons name="shield-checkmark" size={14} color="#10b981" />
+                <Text style={styles.accuracyText}>High-Precision GPS Active</Text>
+              </View>
+
+              <Text style={styles.speedDisclaimer}>
+                Using BestForNavigation mode. Data is updated every 500ms for maximum accuracy while traveling.
               </Text>
-              {intervalMode && (
-                <Text style={styles.intervalText}>
-                  Check interval: <Text style={styles.intervalValue}>{intervalMode}</Text>
-                </Text>
-              )}
             </View>
-          </CardContent>
-          <CardFooter>
-            {!isTracking ? (
-              <Button
-                label="Start Tracking"
-                variant="default"
-                onPress={startTracking}
-                loading={trackingStatus === TRACKING_STATUS.LOADING}
-                style={{ flex: 1 }}
-              />
-            ) : (
-              <Button
-                label="Stop Tracking"
-                variant="destructive"
-                onPress={stopTracking}
-                style={{ flex: 1 }}
-              />
-            )}
-          </CardFooter>
-        </Card>
-
-        {/* ── NEAREST STATION CARD ── */}
-        {nearestStation && (
-          <Card style={styles.card}>
-            <CardHeader>
-              <Text style={styles.sectionLabel}>Nearest Station</Text>
-            </CardHeader>
-            <CardContent>
-              <View style={styles.stationRow}>
-                <Avatar
-                  letter={nearestStation.stationName[0]}
-                  size={52}
-                  backgroundColor={trackingStatus === TRACKING_STATUS.INSIDE ? '#15803d' : '#4f46e5'}
-                />
-                <View style={styles.stationInfo}>
-                  <Text style={styles.stationName}>{nearestStation.stationName}</Text>
-                  <Text style={styles.stationCode}>{nearestStation.stationCode}</Text>
-                  <View style={styles.badgeRow}>
-                    <Badge
-                      label={trackingStatus === TRACKING_STATUS.INSIDE ? 'Inside 500m' : 'Outside 500m'}
-                      variant={trackingStatus === TRACKING_STATUS.INSIDE ? 'success' : 'warning'}
-                    />
-                  </View>
-                </View>
-              </View>
-
-              <Separator />
-
-              <View style={styles.detailGrid}>
-                <DetailItem label="Zone" value={nearestStation.zone} />
-                <DetailItem label="Division" value={nearestStation.division} />
-                <DetailItem label="State" value={nearestStation.state} />
-                <DetailItem label="Code" value={nearestStation.stationCode} />
-                <DetailItem 
-                  label="Station Lat" 
-                  value={(nearestStation.coordinates?.lat ?? nearestStation.location?.coordinates?.[1])?.toFixed(6) || 'N/A'} 
-                />
-                <DetailItem 
-                  label="Station Lng" 
-                  value={(nearestStation.coordinates?.lng ?? nearestStation.location?.coordinates?.[0])?.toFixed(6) || 'N/A'} 
-                />
-              </View>
-
-              {roadDuration !== null && (
-                <>
-                  <Separator />
-                  <View style={styles.detailGrid}>
-                    <DetailItem label="Road Distance" value={formatDistance(roadDistance)} />
-                    <DetailItem label="Est. Driving Time" value={Math.ceil(roadDuration / 60) + ' min'} />
-                    <DetailItem label="Straight Line" value={formatDistance(distanceMeters)} />
-                  </View>
-                </>
-              )}
-
-              {distanceMeters !== null && (
-                <>
-                  <Separator />
-                  <View style={styles.distanceBig}>
-                    <Text style={styles.distanceBigLabel}>Distance</Text>
-                    <Text
-                      style={[
-                        styles.distanceBigValue,
-                        { color: distanceMeters <= BOUNDARY_METERS ? '#4ade80' : '#fbbf24' },
-                      ]}
-                    >
-                      {formatDistance(distanceMeters)}
-                    </Text>
-                    <Text style={styles.distanceBigSub}>
-                      {distanceMeters <= BOUNDARY_METERS
-                        ? `${BOUNDARY_METERS - distanceMeters}m inside boundary`
-                        : `${distanceMeters - BOUNDARY_METERS}m outside boundary`}
-                    </Text>
-                  </View>
-                </>
-              )}
-            </CardContent>
-          </Card>
+          </View>
         )}
 
-        {/* ── LIVE BOARD CARD — shown only when inside station boundary ── */}
-        {(liveBoardLoading || liveBoard || liveBoardError) && (
-          <Card style={styles.card}>
-            <CardHeader>
-              <View style={styles.statusRow}>
-                <Text style={styles.sectionLabel}>🚂 Live Board — Next 2 Hours</Text>
-                {liveBoardLoading && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <View style={[styles.liveDot, { backgroundColor: '#6366f1' }]} />
-                    <Text style={{ color: '#a1a1aa', fontSize: 12 }}>Fetching...</Text>
-                  </View>
-                )}
-                {liveBoard && !liveBoardLoading && (
-                  <Badge label={`${liveBoard.totalTrains} trains`} variant="primary" />
-                )}
-              </View>
-            </CardHeader>
-            <CardContent>
-              {liveBoardLoading && (
-                <View style={{ gap: 12 }}>
-                  <Skeleton height={56} />
-                  <Skeleton height={56} />
-                  <Skeleton height={56} />
-                </View>
-              )}
-
-              {liveBoardError && !liveBoardLoading && (
-                <View style={styles.liveBoardError}>
-                  <Text style={styles.errorTitle}>⚠️ Could not load live board</Text>
-                  <Text style={styles.errorText}>{liveBoardError}</Text>
-                </View>
-              )}
-
-              {liveBoard && !liveBoardLoading && liveBoard.trains.length === 0 && (
-                <Text style={{ color: '#71717a', textAlign: 'center', paddingVertical: 16 }}>
-                  No trains scheduled at this station in the next 2 hours.
-                </Text>
-              )}
-
-              {liveBoard && !liveBoardLoading && liveBoard.trains.map((train, idx) => (
-                <LiveTrainRow key={`${train.trainNumber}-${idx}`} train={train} />
-              ))}
-            </CardContent>
-          </Card>
+        {activeTab === 'history' && (
+          <View style={styles.tabContent}>
+            <View style={styles.minimalCard}>
+              <Text style={styles.minimalLabel}>RECENT TRIPS</Text>
+              <Text style={styles.emptyText}>Your confirmed train journeys will appear here.</Text>
+            </View>
+          </View>
         )}
 
-        {/* ── LOCATION DEBUG CARD ── */}
-        {userLocation && (
-          <Card style={styles.card}>
-            <CardHeader>
-              <Text style={styles.sectionLabel}>Your Location</Text>
-            </CardHeader>
-            <CardContent>
-              <View style={styles.coordRow}>
-                <View style={styles.coordItem}>
-                  <Text style={styles.coordLabel}>Latitude</Text>
-                  <Text style={styles.coordValue}>{userLocation.lat.toFixed(6)}</Text>
+        {activeTab === 'settings' && (
+          <View style={styles.tabContent}>
+            <View style={styles.minimalCard}>
+              <Text style={styles.minimalLabel}>DEBUG INFO</Text>
+              {userLocation ? (
+                <View style={styles.debugRow}>
+                  <Text style={styles.debugText}>Lat: {userLocation.lat.toFixed(5)}</Text>
+                  <Text style={styles.debugText}>Lng: {userLocation.lng.toFixed(5)}</Text>
                 </View>
-                <View style={styles.coordDivider} />
-                <View style={styles.coordItem}>
-                  <Text style={styles.coordLabel}>Longitude</Text>
-                  <Text style={styles.coordValue}>{userLocation.lng.toFixed(6)}</Text>
-                </View>
-              </View>
-              {lastChecked && (
-                <Text style={styles.lastChecked}>
-                  Last updated:{' '}
-                  {lastChecked.toLocaleTimeString('en-IN', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                  })}
-                </Text>
+              ) : (
+                <Text style={styles.debugText}>Location not available</Text>
               )}
-            </CardContent>
-          </Card>
+              <Text style={styles.debugText}>Threshold: 500m</Text>
+              {intervalMode && <Text style={styles.debugText}>Polling: {intervalMode}</Text>}
+            </View>
+          </View>
         )}
-
-        {/* ── LOADING SKELETONS ── */}
-        {trackingStatus === TRACKING_STATUS.LOADING && (
-          <Card style={styles.card}>
-            <CardContent style={{ gap: 12, paddingTop: 16 }}>
-              <Skeleton height={20} width="60%" />
-              <Skeleton height={16} width="40%" />
-              <Skeleton height={48} />
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ── ERROR STATE ── */}
-        {locationError && (
-          <Card style={[styles.card, { borderColor: '#dc2626' }]}>
-            <CardContent>
-              <Text style={styles.errorTitle}>⚠️ Location Error</Text>
-              <Text style={styles.errorText}>{locationError}</Text>
-              <Button
-                label="Retry"
-                variant="outline"
-                onPress={startTracking}
-                style={{ marginTop: 12 }}
-              />
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ── HOW IT WORKS CARD ── */}
-        <Card style={styles.card}>
-          <CardHeader>
-            <Text style={styles.sectionLabel}>How It Works</Text>
-          </CardHeader>
-          <CardContent>
-            <InfoRow icon="📍" text="Gets your GPS location via expo-location" />
-            <InfoRow icon="🚗" text="Calculates actual road distance using OpenRouteService" />
-            <InfoRow icon="📏" text="Uses Haversine formula as a fallback" />
-            <InfoRow icon="🟢" text="Inside 500m → checks every 30 seconds" />
-            <InfoRow icon="🟡" text="Outside 500m → checks every 5 minutes" />
-            <InfoRow icon="🔔" text="Shows toast notifications on boundary change" />
-          </CardContent>
-        </Card>
-
-        <View style={{ height: 32 }} />
+        
+        <View style={{ height: 100 }} />
       </ScrollView>
+
+      {/* ── BOTTOM NAV BAR ── */}
+      <View style={styles.bottomNav}>
+        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('track')}>
+          <Ionicons name={activeTab === 'track' ? "location" : "location-outline"} size={22} color={activeTab === 'track' ? "#fafafa" : "#71717a"} style={{ marginBottom: 4 }} />
+          <Text style={[styles.navText, activeTab === 'track' && styles.navTextActive]}>Track</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('speed')}>
+          <Ionicons name={activeTab === 'speed' ? "speedometer" : "speedometer-outline"} size={22} color={activeTab === 'speed' ? "#fafafa" : "#71717a"} style={{ marginBottom: 4 }} />
+          <Text style={[styles.navText, activeTab === 'speed' && styles.navTextActive]}>Speed</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('history')}>
+          <Ionicons name={activeTab === 'history' ? "time" : "time-outline"} size={22} color={activeTab === 'history' ? "#fafafa" : "#71717a"} style={{ marginBottom: 4 }} />
+          <Text style={[styles.navText, activeTab === 'history' && styles.navTextActive]}>History</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('settings')}>
+          <Ionicons name={activeTab === 'settings' ? "settings" : "settings-outline"} size={22} color={activeTab === 'settings' ? "#fafafa" : "#71717a"} style={{ marginBottom: 4 }} />
+          <Text style={[styles.navText, activeTab === 'settings' && styles.navTextActive]}>Settings</Text>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
@@ -825,6 +840,7 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: '#09090b',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
 
   // ── Shared Splash/Permission ──
@@ -1161,6 +1177,246 @@ const styles = StyleSheet.create({
     color: '#fafafa',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
+  
+  // ── Bottom Nav Bar ────────────────────────────────────────────────────────
+  bottomNav: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 80,
+    backgroundColor: 'rgba(9, 9, 11, 0.85)',
+    borderTopWidth: 1,
+    borderTopColor: '#27272a',
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingBottom: 20, // For home indicator
+    backdropFilter: 'blur(10px)',
+  },
+  navItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+  },
+  navIcon: {
+    fontSize: 22,
+    marginBottom: 4,
+    opacity: 0.5,
+  },
+  navIconActive: {
+    opacity: 1,
+  },
+  navText: {
+    fontSize: 10,
+    color: '#71717a',
+    fontWeight: '600',
+  },
+  navTextActive: {
+    color: '#fafafa',
+  },
+
+  // ── Minimal Premium UI Additions ──────────────────────────────────────────
+  tabContent: {
+    flex: 1,
+    gap: 16,
+    paddingTop: 8,
+  },
+  premiumCard: {
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  premiumHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  premiumIcon: {
+    fontSize: 24,
+    marginRight: 8,
+  },
+  premiumTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#10b981',
+  },
+  premiumText: {
+    fontSize: 15,
+    color: '#e4e4e7',
+    lineHeight: 22,
+    marginBottom: 16,
+  },
+  boldText: {
+    fontWeight: '800',
+    color: '#fff',
+  },
+  premiumButton: {
+    backgroundColor: '#10b981',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  premiumButtonText: {
+    color: '#000',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  actionContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 24,
+  },
+  mainActionButton: {
+    width: 200,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  mainActionStart: {
+    backgroundColor: '#fff',
+  },
+  mainActionStop: {
+    backgroundColor: '#27272a',
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+  },
+  mainActionText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#000',
+  },
+  statusMinimalText: {
+    fontSize: 13,
+    color: '#a1a1aa',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  statusMinimalWrapper: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    marginTop: 8,
+  },
+  minimalCard: {
+    backgroundColor: '#1c1c1e',
+    borderRadius: 20,
+    padding: 20,
+  },
+  minimalLabel: {
+    fontSize: 11,
+    color: '#71717a',
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  minimalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  minimalValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  minimalSub: {
+    fontSize: 13,
+    color: '#a1a1aa',
+    marginTop: 2,
+  },
+  minimalRight: {
+    alignItems: 'flex-end',
+  },
+  minimalDistance: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#818cf8',
+    letterSpacing: -0.5,
+  },
+  minimalStatus: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  minimalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  trainRowMinimal: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
+  },
+  trainRowLeft: {
+    flex: 1,
+  },
+  trainRowRight: {
+    alignItems: 'flex-end',
+  },
+  trainNumText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  trainDestText: {
+    fontSize: 13,
+    color: '#a1a1aa',
+    marginTop: 2,
+  },
+  trainTimeText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  trainDelayText: {
+    fontSize: 12,
+    color: '#f59e0b',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  moreText: {
+    fontSize: 13,
+    color: '#6366f1',
+    textAlign: 'center',
+    marginTop: 12,
+    fontWeight: '600',
+  },
+  emptyText: {
+    fontSize: 14,
+    color: '#a1a1aa',
+    fontStyle: 'italic',
+    paddingVertical: 10,
+  },
+  errorTextMinimal: {
+    color: '#ef4444',
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  debugRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  debugText: {
+    fontSize: 13,
+    color: '#a1a1aa',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    marginBottom: 4,
+  },
+
   liveBoardTrainName: {
     fontSize: 13,
     color: '#d4d4d8',
@@ -1214,6 +1470,131 @@ const styles = StyleSheet.create({
   },
   liveBoardError: {
     paddingVertical: 12,
+  },
+  
+  // ── Speedometer Styles ──
+  speedCircle: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    paddingVertical: 20,
+  },
+  speedValueRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    marginVertical: 10,
+  },
+  speedValueMain: {
+    fontSize: 92,
+    fontWeight: '800',
+    color: '#10b981',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -2,
+  },
+  speedUnit: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#71717a',
+    marginLeft: 8,
+    letterSpacing: 1,
+  },
+  speedIndicatorBar: {
+    width: '80%',
+    height: 6,
+    backgroundColor: '#27272a',
+    borderRadius: 3,
+    marginTop: 20,
+    overflow: 'hidden',
+  },
+  speedIndicatorFill: {
+    height: '100%',
+    backgroundColor: '#10b981',
+    borderRadius: 3,
+  },
+  accuracyNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    marginTop: 20,
+    gap: 6,
+  },
+  accuracyText: {
+    fontSize: 12,
+    color: '#10b981',
+    fontWeight: '600',
+  },
+  speedDisclaimer: {
+    marginTop: 25,
+    color: '#52525b',
+    fontSize: 12,
+    textAlign: 'center',
+    paddingHorizontal: 30,
+    lineHeight: 18,
+  },
+
+  // ── Intro Styles ──
+  introContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  introImage: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+  },
+  introTrain: {
+    position: 'absolute',
+    width: 600,
+    height: 300,
+    bottom: 50,
+  },
+  fogOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: -200,
+    width: '200%',
+    height: '100%',
+  },
+  fogCloud: {
+    width: 400,
+    height: 400,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 200,
+  },
+  introOverlay: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    height: '100%',
+  },
+  introTitle: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: '#fff',
+    letterSpacing: 8,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 10,
+  },
+  introLine: {
+    width: 60,
+    height: 3,
+    backgroundColor: '#10b981',
+    marginVertical: 15,
+    borderRadius: 2,
+  },
+  introSub: {
+    fontSize: 12,
+    color: '#10b981',
+    fontWeight: '700',
+    letterSpacing: 4,
+    textTransform: 'uppercase',
   },
 });
 

@@ -4,28 +4,22 @@ import {
   Text,
   Animated,
   StyleSheet,
-  SafeAreaView,
+  Platform,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { createContext, useContext, useState, useCallback } from 'react';
 
 /**
- * Toast notification system (Sonner-inspired for React Native)
- *
- * Usage:
- *   const { showToast } = useToast();
- *   showToast('You are near Kakkanchery', 'success');
- *   showToast('You are outside the boundary', 'warning');
+ * Toast notification system (Minimalist & Premium)
  */
-
-// ─── Toast Context ─────────────────────────────────────────────────────────────
-import { createContext, useContext, useState, useCallback } from 'react';
 
 const ToastContext = createContext(null);
 
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
-  const showToast = useCallback((message, type = 'default', duration = 3500) => {
-    const id = Date.now().toString() + Math.random().toString(36).substring(7);
+  const showToast = useCallback((message, type = 'default', duration = 3000) => {
+    const id = Date.now().toString();
     setToasts((prev) => [...prev, { id, message, type, duration }]);
   }, []);
 
@@ -47,7 +41,6 @@ export function useToast() {
   return ctx;
 }
 
-// ─── Toast Container ───────────────────────────────────────────────────────────
 function ToastContainer({ toasts, onRemove }) {
   if (toasts.length === 0) return null;
 
@@ -60,32 +53,29 @@ function ToastContainer({ toasts, onRemove }) {
   );
 }
 
-// ─── Toast Item ────────────────────────────────────────────────────────────────
 function ToastItem({ toast, onRemove }) {
-  const translateY = useRef(new Animated.Value(-20)).current;
+  const translateY = useRef(new Animated.Value(-30)).current;
   const opacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // Slide in
     Animated.parallel([
       Animated.spring(translateY, {
         toValue: 0,
         useNativeDriver: true,
-        tension: 100,
-        friction: 10,
+        damping: 15,
+        stiffness: 120,
       }),
       Animated.timing(opacity, {
         toValue: 1,
-        duration: 200,
+        duration: 250,
         useNativeDriver: true,
       }),
     ]).start();
 
-    // Auto-dismiss
     const timer = setTimeout(() => {
       Animated.parallel([
         Animated.timing(translateY, {
-          toValue: -20,
+          toValue: -15,
           duration: 250,
           useNativeDriver: true,
         }),
@@ -101,11 +91,11 @@ function ToastItem({ toast, onRemove }) {
   }, []);
 
   const typeStyles = {
-    default: { bg: '#18181b', border: '#27272a', icon: '💬', text: '#fafafa' },
-    success: { bg: '#14532d', border: '#16a34a', icon: '✅', text: '#4ade80' },
-    warning: { bg: '#422006', border: '#d97706', icon: '⚠️', text: '#fbbf24' },
-    error: { bg: '#450a0a', border: '#dc2626', icon: '❌', text: '#f87171' },
-    info: { bg: '#1e1b4b', border: '#6366f1', icon: 'ℹ️', text: '#a5b4fc' },
+    default: { color: '#fafafa', icon: 'chatbox-ellipses-outline' },
+    success: { color: '#4ade80', icon: 'checkmark-circle-outline' },
+    warning: { color: '#fbbf24', icon: 'alert-circle-outline' },
+    error: { color: '#f87171', icon: 'close-circle-outline' },
+    info: { color: '#818cf8', icon: 'information-circle-outline' },
   };
 
   const style = typeStyles[toast.type] || typeStyles.default;
@@ -115,15 +105,15 @@ function ToastItem({ toast, onRemove }) {
       style={[
         styles.toast,
         {
-          backgroundColor: style.bg,
-          borderColor: style.border,
+          borderColor: 'rgba(255,255,255,0.1)',
           transform: [{ translateY }],
           opacity,
         },
       ]}
     >
-      <Text style={styles.icon}>{style.icon}</Text>
-      <Text style={[styles.message, { color: style.text }]} numberOfLines={2}>
+      <View style={[styles.indicator, { backgroundColor: style.color }]} />
+      <Ionicons name={style.icon} size={18} color={style.color} />
+      <Text style={styles.message} numberOfLines={2}>
         {toast.message}
       </Text>
     </Animated.View>
@@ -133,34 +123,44 @@ function ToastItem({ toast, onRemove }) {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    top: 60,
-    left: 16,
-    right: 16,
+    top: Platform.OS === 'ios' ? 54 : 44,
+    left: 20,
+    right: 20,
     zIndex: 9999,
-    gap: 8,
-    alignItems: 'stretch',
+    gap: 10,
+    alignItems: 'center',
   },
   toast: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#1c1c1e',
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
+    borderWidth: 0.5,
     gap: 10,
+    width: '100%',
     shadowColor: '#000',
-    shadowOpacity: 0.5,
+    shadowOpacity: 0.4,
     shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 12,
+    shadowRadius: 10,
     elevation: 8,
   },
-  icon: {
-    fontSize: 16,
+  indicator: {
+    position: 'absolute',
+    left: 0,
+    top: '25%',
+    bottom: '25%',
+    width: 3,
+    borderTopRightRadius: 2,
+    borderBottomRightRadius: 2,
   },
   message: {
     flex: 1,
-    fontSize: 14,
-    fontWeight: '500',
-    lineHeight: 20,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fafafa',
+    letterSpacing: -0.2,
   },
 });
+

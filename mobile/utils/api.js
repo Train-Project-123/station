@@ -73,3 +73,26 @@ export async function healthCheck() {
   return response.json();
 }
 
+/**
+ * Match train based on user locations
+ * @param {Array<{lat, lng, speed, timestamp}>} locations 
+ */
+export async function matchTrain(locations) {
+
+  const url = `${API_BASE_URL}/api/trains/match`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ locations }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Match API error: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
