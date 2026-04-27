@@ -22,7 +22,6 @@ import { haversineDistance, formatDistance, isWithinBoundary } from '../utils/ha
 import { fetchNearbyStations, fetchStationLiveBoard } from '../utils/api';
 import { getRoadDistance } from '../utils/ors';
 import { useToast } from './Toast';
-import Intro3D from './Intro3D';
 import {
   Card,
   CardHeader,
@@ -60,8 +59,7 @@ const TRACKING_STATUS = {
 export default function TrackingScreen() {
   const { showToast } = useToast();
 
-  // ── 3D Intro State ──────────────────────────────────────────────────────
-  const [showIntro, setShowIntro] = useState(true);
+
 
   // ── Permission Gate State ─────────────────────────────────────────────────
 
@@ -443,10 +441,7 @@ export default function TrackingScreen() {
     };
   }, []);
 
-  // ─── RENDER: Real-time 3D Intro ──────────────────────────────────────────
-  if (showIntro) {
-    return <Intro3D onFinish={() => setShowIntro(false)} />;
-  }
+
 
   // ─── RENDER: Permission checking splash ────────────────────────────────────
   if (permissionStatus === PERMISSION_STATUS.CHECKING) {
