@@ -3,7 +3,7 @@
  * Implements the algorithm for auto-detecting which train the user has boarded.
  */
 
-const RAIL_RADAR_API_KEY = 'rr_as97u1l1wby7ueobdx3uc5cieea9b3sp';
+const RAIL_RADAR_API_KEY = process.env.EXPO_PUBLIC_TRAIN_API;
 const RAIL_RADAR_BASE_URL = 'https://api.railradar.org/api/v1';
 
 /**
