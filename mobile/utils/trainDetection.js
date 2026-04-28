@@ -31,15 +31,14 @@ export async function getActualDeparture(trainNumber, stationCode) {
     const json = await response.json();
     const data = json.data || json;
     const route = data.route || [];
-    
-    // Find the stop for our station
+   
     const stop = route.find(s => 
       (s.stationCode && s.stationCode.toUpperCase() === stationCode.toUpperCase()) || 
       (s.code && s.code.toUpperCase() === stationCode.toUpperCase())
     );
     
     if (stop && stop.actualDeparture) {
-      // Return actualDeparture (assuming it's a unix timestamp in seconds as per prompt)
+     
       return stop.actualDeparture;
     }
     
@@ -82,24 +81,21 @@ export async function performMatch(T_trigger, stationCode, candidateTrains) {
     });
   }
 
-  // STEP 5: False Trigger Guard
-  // "if no train departed within 600 seconds (10 min) before T_trigger, it's a false trigger."
+  
   if (validCandidates.length === 0) {
     console.log('[DETECTION] No valid candidates found (all filtered).');
     return { status: 'NO_CANDIDATES' };
   }
 
-  // STEP 3: Sort by gap ascending
   validCandidates.sort((a, b) => a.gap - b.gap);
   const bestMatch = validCandidates[0];
 
-  // Check the 600s rule on the best match specifically
   if (bestMatch.gap > 600) {
     console.log(`[DETECTION] False trigger: best match gap is ${bestMatch.gap}s (> 600s).`);
     return { status: 'FALSE_TRIGGER' };
   }
 
-  // STEP 4: Confidence Scoring
+
   let confidence = 'LOW';
   if (bestMatch.gap < 180) {
     confidence = 'HIGH';
