@@ -20,6 +20,7 @@ import { BACKGROUND_LOCATION_TASK } from '../utils/backgroundTask';
 
 import { haversineDistance, formatDistance, isWithinBoundary } from '../utils/haversine';
 import { fetchNearbyStations, fetchStationLiveBoard } from '../utils/api';
+import { performMatch } from '../utils/trainDetection';
 import { getRoadDistance } from '../utils/ors';
 import { useToast } from './Toast';
 import {
@@ -89,6 +90,12 @@ export default function TrackingScreen() {
   const [activeTab, setActiveTab] = useState('track'); // 'track', 'speed', 'history', 'settings'
   const [liveSpeed, setLiveSpeed] = useState(0);
   const [tripHistory, setTripHistory] = useState([]);
+
+  // ── Speed Monitor State (Step 1) ──────────────────────────────────────────
+  const [speedHistory, setSpeedHistory] = useState([]); // Rolling last 5 speeds
+  const [triggerTicks, setTriggerTicks] = useState(0); // Consecutive 5s intervals where avg > 20kmph
+  const [isSpeedMonitorActive, setIsSpeedMonitorActive] = useState(false);
+  const speedMonitorIntervalRef = useRef(null);
 
   // ── Load History on Mount ──────────────────────────────────────────────────
   useEffect(() => {
@@ -167,6 +174,105 @@ export default function TrackingScreen() {
       }
     };
   }, [activeTab]);
+
+  // ── STEP 1: Speed Monitor Logic ───────────────────────────────────────────
+  useEffect(() => {
+    if (trackingStatus === TRACKING_STATUS.INSIDE && !isSpeedMonitorActive) {
+      setIsSpeedMonitorActive(true);
+      startSpeedMonitor();
+    } else if (trackingStatus !== TRACKING_STATUS.INSIDE && isSpeedMonitorActive) {
+      stopSpeedMonitor();
+      setIsSpeedMonitorActive(false);
+    }
+  }, [trackingStatus, isSpeedMonitorActive]);
+
+  const startSpeedMonitor = () => {
+    if (speedMonitorIntervalRef.current) clearInterval(speedMonitorIntervalRef.current);
+    
+    speedMonitorIntervalRef.current = setInterval(async () => {
+      try {
+        const { coords } = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        const currentSpeedKmph = (coords.speed || 0) * 3.6;
+        
+        setSpeedHistory(prev => {
+          const next = [...prev, currentSpeedKmph].slice(-5);
+          const avg = next.length > 0 ? next.reduce((a, b) => a + b, 0) / next.length : 0;
+          
+          if (avg > 20) {
+            setTriggerTicks(t => {
+              const nextT = t + 1;
+              if (nextT >= 9) { // 45 seconds
+                const T_trigger = Math.floor(Date.now() / 1000);
+                stopSpeedMonitor();
+                setIsSpeedMonitorActive(false);
+                handleSpeedTrigger(T_trigger);
+                return 0;
+              }
+              return nextT;
+            });
+          } else {
+            setTriggerTicks(0);
+          }
+          return next;
+        });
+      } catch (err) {
+        console.error('[SPEED MONITOR] GPS poll failed:', err.message);
+      }
+    }, 5000);
+  };
+
+  const stopSpeedMonitor = () => {
+    if (speedMonitorIntervalRef.current) {
+      clearInterval(speedMonitorIntervalRef.current);
+      speedMonitorIntervalRef.current = null;
+    }
+    setTriggerTicks(0);
+    setSpeedHistory([]);
+  };
+
+  const handleSpeedTrigger = async (T_trigger) => {
+    if (!nearestStation || !liveBoard || !liveBoard.trains) {
+      // If no data, reset monitor and try again later
+      setTimeout(() => {
+        if (currentStatusRef.current === TRACKING_STATUS.INSIDE) {
+          setIsSpeedMonitorActive(true);
+          startSpeedMonitor();
+        }
+      }, 10000);
+      return;
+    }
+
+    showToast('High speed detected! Matching train...', 'info');
+
+    try {
+      const result = await performMatch(T_trigger, nearestStation.stationCode, liveBoard.trains);
+      
+      if (result.status === 'SUCCESS') {
+        const matched = {
+          train: result.train,
+          departureStation: nearestStation.stationName,
+          confidence: result.confidence,
+          timestamp: new Date().toISOString()
+        };
+        
+        setMatchedTrainData(matched);
+        await AsyncStorage.setItem('matched_train_result', JSON.stringify(matched));
+        showToast(`Match Found: ${result.train.trainName} (${result.confidence})`, 'success');
+      } else if (result.status === 'FALSE_TRIGGER' || result.status === 'NO_CANDIDATES' || result.status === 'LOW_CONFIDENCE') {
+        const msg = result.status === 'FALSE_TRIGGER' ? 'False trigger detected. Resuming...' : 
+                    result.status === 'LOW_CONFIDENCE' ? 'Low confidence match. Discarding...' :
+                    'No matching train found. Resuming...';
+        showToast(msg, 'warning');
+        if (currentStatusRef.current === TRACKING_STATUS.INSIDE) {
+          setIsSpeedMonitorActive(true);
+          startSpeedMonitor();
+        }
+      }
+    } catch (err) {
+      console.error('[DETECTION] Match failed:', err);
+      showToast('Error matching train.', 'error');
+    }
+  };
 
   const intervalRef = useRef(null);
   const currentStatusRef = useRef(TRACKING_STATUS.IDLE);
@@ -438,6 +544,35 @@ export default function TrackingScreen() {
     showToast('Tracking stopped', 'default');
   }, [showToast]);
 
+  const confirmBoarding = async () => {
+    showToast('Boarding Confirmed!', 'success');
+    if (matchedTrainData) {
+      addToHistory({
+        id: Date.now().toString(),
+        trainName: matchedTrainData.train.trainName,
+        trainNumber: matchedTrainData.train.trainNumber,
+        date: new Date().toLocaleDateString(),
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        route: `${matchedTrainData.train.fromCode || 'Unknown'} → ${matchedTrainData.train.toCode || 'Unknown'}`
+      });
+    }
+    setMatchedTrainData(null);
+    await AsyncStorage.removeItem('matched_train_result');
+    await AsyncStorage.removeItem('last_history_id');
+  };
+
+  const rejectBoarding = async () => {
+    showToast('Match rejected. Recalculating...', 'info');
+    setMatchedTrainData(null);
+    await AsyncStorage.removeItem('matched_train_result');
+    
+    // Resume speed monitor
+    if (currentStatusRef.current === TRACKING_STATUS.INSIDE) {
+      setIsSpeedMonitorActive(true);
+      startSpeedMonitor();
+    }
+  };
+
   // ── Cleanup on unmount ───────────────────────────────────────────────────
   useEffect(() => {
     return () => {
@@ -623,21 +758,25 @@ export default function TrackingScreen() {
               <View style={styles.premiumCard}>
                 <View style={styles.premiumHeader}>
                   <Ionicons name="train" size={28} color="#10b981" style={{ marginRight: 8 }} />
-                  <Text style={styles.premiumTitle}>Train Detected</Text>
+                  <Text style={styles.premiumTitle}>Are You inside this train?</Text>
                 </View>
                 <Text style={styles.premiumText}>
-                  You're currently traveling on <Text style={styles.boldText}>{matchedTrainData.train.trainNumber} - {matchedTrainData.train.trainName}</Text> from {matchedTrainData.departureStation}.
+                  We think you're traveling on <Text style={styles.boldText}>{matchedTrainData.train.trainNumber} - {matchedTrainData.train.trainName}</Text> from {matchedTrainData.departureStation}.
                 </Text>
-                <TouchableOpacity 
-                  style={styles.premiumButton}
-                  onPress={() => {
-                    showToast('Boarding Confirmed!', 'success');
-                    setMatchedTrainData(null);
-                    AsyncStorage.removeItem('matched_train_result');
-                  }}
-                >
-                  <Text style={styles.premiumButtonText}>Confirm Boarding</Text>
-                </TouchableOpacity>
+                <View style={styles.confirmationButtons}>
+                  <TouchableOpacity 
+                    style={[styles.premiumButton, { flex: 1, marginRight: 10 }]}
+                    onPress={confirmBoarding}
+                  >
+                    <Text style={styles.premiumButtonText}>Confirm</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.premiumButton, { flex: 1, backgroundColor: '#3f3f46' }]}
+                    onPress={rejectBoarding}
+                  >
+                    <Text style={styles.premiumButtonText}>No</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
 
@@ -1508,6 +1647,10 @@ const styles = StyleSheet.create({
     color: '#ef4444',
     fontSize: 13,
     marginBottom: 8,
+  },
+  confirmationButtons: {
+    flexDirection: 'row',
+    marginTop: 15,
   },
   debugRow: {
     flexDirection: 'row',
