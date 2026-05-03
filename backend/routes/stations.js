@@ -1,91 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const Station = require('../models/Station');
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
-// Detailed metadata for common stations to support full auto-fill in test app
-const STATION_METADATA = {
-  "FK": {
-    name: "FEROK",
-    zone: "SR",
-    division: "PGT",
-    state: "Kerala",
-    latitude: 11.2486,
-    longitude: 75.8364
-  },
-  "PGI": {
-    name: "PARPANANGADI",
-    zone: "SR",
-    division: "PGT",
-    state: "Kerala",
-    latitude: 11.04693,
-    longitude: 75.86042
-  },
-  "KAKJ": {
-    name: "KAKKANCHERY",
-    zone: "SR",
-    division: "PGT",
-    state: "Kerala",
-    latitude: 11.152122,
-    longitude: 75.893304
-  },
-  "CLT": {
-    name: "KOZHIKODE MAIN",
-    zone: "SR",
-    division: "PGT",
-    state: "Kerala",
-    latitude: 11.2486,
-    longitude: 75.7844
-  },
-  "AWY": {
-    name: "ALUVA",
-    zone: "SR",
-    division: "TVC",
-    state: "Kerala",
-    latitude: 10.1076,
-    longitude: 76.3533
-  },
-  "ERS": {
-    name: "ERNAKULAM JN",
-    zone: "SR",
-    division: "TVC",
-    state: "Kerala",
-    latitude: 9.9659,
-    longitude: 76.2905
-  },
-  "ERN": {
-    name: "ERNAKULAM TOWN",
-    zone: "SR",
-    division: "TVC",
-    state: "Kerala",
-    latitude: 9.9918,
-    longitude: 76.2882
-  },
-  "TCR": {
-    name: "THRISSUR",
-    zone: "SR",
-    division: "TVC",
-    state: "Kerala",
-    latitude: 10.5186,
-    longitude: 76.2101
-  },
-  "SRR": {
-    name: "SHORANUR JN",
-    zone: "SR",
-    division: "PGT",
-    state: "Kerala",
-    latitude: 10.7602,
-    longitude: 76.2736
-  },
-  "TVC": {
-    name: "THIRUVANANTHAPURAM",
-    zone: "SR",
-    division: "TVC",
-    state: "Kerala",
-    latitude: 8.4870,
-    longitude: 76.9515
-  }
-};
+// Dynamic coordinate lookup enabled (no more hardcoded metadata)
 
 /**
  * GET /api/stations
@@ -202,49 +120,9 @@ router.get('/nearby', async (req, res) => {
 router.get('/:code/live', async (req, res) => {
   const stationCode = req.params.code.toUpperCase();
   const RAIL_RADAR_API = 'https://api.railradar.org';
-  const apiKey = process.env.TRAIN_API;
-
-  // ── Smart Fetch: Prioritize local metadata for demo/test purposes ───────────
-  const metadata = STATION_METADATA[stationCode];
-  
-  // If we have detailed local metadata, return it immediately (no API call needed)
-  if (metadata) {
-    console.log(`[SMART FETCH] 🧠 Using local metadata for ${stationCode}`);
-    return res.json({
-      success: true,
-      data: {
-        station: {
-          code: stationCode,
-          name: metadata.name,
-          zone: metadata.zone,
-          division: metadata.division,
-          state: metadata.state,
-          coordinates: { lat: metadata.latitude, lng: metadata.longitude }
-        },
-        queryingForNextHours: 2,
-        totalTrains: 0,
-        trains: [],
-        _source: 'local_metadata'
-      },
-      meta: {
-        timestamp: new Date().toISOString(),
-        service: 'TrainAPI_V1',
-        method: 'getLiveStationBoard'
-      }
-    });
-  }
-
-  // Fallback to RailRadar API if not in local metadata
-  if (!apiKey) {
-    return res.status(500).json({
-      success: false,
-      error: { code: 'CONFIG_ERROR', message: 'TRAIN_API key not configured.', statusCode: 500 }
-    });
-  }
-
-  try {
+  const apiKey = process.env.TRAIN_API;  try {
     const url = `${RAIL_RADAR_API}/api/v1/stations/${stationCode}/live?hours=2`;
-    console.log(`[LIVE BOARD] 🚉 Fetching live board for ${stationCode}`);
+    console.log(`[LIVE BOARD] 🚉 Fetching real-time data for ${stationCode}`);
 
     const response = await fetch(url, {
       headers: {
@@ -256,33 +134,50 @@ router.get('/:code/live', async (req, res) => {
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error(`[LIVE BOARD] ❌ RailRadar API error ${response.status}:`, errText);
       return res.status(response.status).json({
         success: false,
         message: `RailRadar API returned ${response.status}.`,
-        detail: errText,
       });
     }
 
     const json = await response.json();
-    const board = json.data ?? json; // Handle both wrapped and unwrapped responses
+    const board = json.data ?? json;
+    const stationName = board.station?.name || "";
 
-    // Follow the specific structure provided: { success, data: { station, queryingForNextHours, totalTrains, trains }, meta }
-    const metadata = STATION_METADATA[stationCode] || {};
-    
+    let coordinates = null;
+
+    // REAL-TIME LOOKUP: Fetch coordinates from OpenStreetMap if station name exists
+    if (stationName) {
+      try {
+        console.log(`[GEO LOOKUP] 🌍 Finding real coordinates for: ${stationName} Railway Station`);
+        const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(stationName + ' Railway Station')}&format=json&limit=1`;
+        const osmRes = await fetch(osmUrl, {
+          headers: { 'User-Agent': 'Thirakkundo-App-Backend' }
+        });
+        const osmData = await osmRes.json();
+        
+        if (osmData && osmData.length > 0) {
+          coordinates = {
+            lat: parseFloat(osmData[0].lat),
+            lng: parseFloat(osmData[0].lon)
+          };
+          console.log(`[GEO LOOKUP] ✅ Found: ${coordinates.lat}, ${coordinates.lng}`);
+        }
+      } catch (geoErr) {
+        console.warn(`[GEO LOOKUP] ❌ Failed to find coordinates:`, geoErr.message);
+      }
+    }
+
     return res.json({
       success: true,
       data: {
         station: {
           code: stationCode,
-          name: metadata.name || board.station?.name || "",
-          zone: metadata.zone || null,
-          division: metadata.division || null,
-          state: metadata.state || null,
-          coordinates: metadata.latitude ? {
-            lat: metadata.latitude,
-            lng: metadata.longitude
-          } : null
+          name: stationName,
+          zone: board.station?.zone || null,
+          division: board.station?.division || null,
+          state: board.station?.state || null,
+          coordinates: coordinates
         },
         queryingForNextHours: board.queryingForNextHours || 2,
         totalTrains: (board.trains || []).length,
@@ -313,18 +208,14 @@ router.get('/:code/live', async (req, res) => {
             hasDeparted: entry.status?.hasDeparted || false,
             isDestinationChanged: entry.status?.isDestinationChanged || false,
             isSourceChanged: entry.status?.isSourceChanged || false,
-          },
-          coachInfo: entry.coachInfo || {
-            arrivalCoachPosition: null,
-            departureCoachPosition: null,
           }
         })),
       },
       meta: {
         timestamp: new Date().toISOString(),
-        traceId: response.headers.get('x-trace-id') || null,
         service: 'TrainAPI_V1',
-        method: 'getLiveStationBoard'
+        method: 'getLiveStationBoard',
+        _source: 'live_api_with_real_lookup'
       }
     });
   } catch (err) {
@@ -442,9 +333,9 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLng / 2) *
-      Math.sin(dLng / 2);
+    Math.cos(toRad(lat2)) *
+    Math.sin(dLng / 2) *
+    Math.sin(dLng / 2);
 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
@@ -461,7 +352,7 @@ function toRad(deg) {
 router.put('/:id', async (req, res) => {
   try {
     const { stationName, stationCode, zone, division, state, latitude, longitude } = req.body;
-    
+
     const updateData = {
       stationName,
       stationCode: stationCode?.toUpperCase(),
@@ -475,7 +366,7 @@ router.put('/:id', async (req, res) => {
     };
 
     const station = await Station.findByIdAndUpdate(req.params.id, updateData, { new: true });
-    
+
     if (!station) {
       return res.status(404).json({ success: false, message: 'Station not found' });
     }
