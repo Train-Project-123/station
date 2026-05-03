@@ -1153,16 +1153,24 @@ export default function TrackingScreen() {
                       style={[styles.saveBtn, { marginTop: 20 }]}
                       disabled={adminLoading}
                       onPress={async () => {
+                        if (!adminForm.name || !adminForm.code || !adminForm.lat || !adminForm.lng) {
+                          showToast('Please fill all fields', 'warning');
+                          return;
+                        }
+
                         setAdminLoading(true);
                         try {
                           const data = {
                             stationName: adminForm.name,
                             stationCode: adminForm.code,
-                            zone: adminForm.zone,
-                            state: adminForm.state,
+                            zone: adminForm.zone || 'SR',
+                            division: 'TVC', // Default for now
+                            state: adminForm.state || 'Kerala',
                             latitude: parseFloat(adminForm.lat),
                             longitude: parseFloat(adminForm.lng)
                           };
+
+                          console.log('[ADMIN] Saving station data:', data);
 
                           let res;
                           if (isEditMode) {
@@ -1182,6 +1190,7 @@ export default function TrackingScreen() {
                             showToast(res.message || 'Operation failed', 'error');
                           }
                         } catch(e) {
+                          console.error('[ADMIN] Save Error:', e.message);
                           showToast('Network error', 'error');
                         } finally {
                           setAdminLoading(false);
@@ -1218,7 +1227,7 @@ export default function TrackingScreen() {
                       <Text style={{ color: '#71717a', textAlign: 'center', marginTop: 20 }}>No stations found.</Text>
                     ) : (
                       allStations.map((station, i) => (
-                        <View key={station._id || i} style={styles.stationListItem}>
+                        <View key={`station-${station._id || i}-${i}`} style={styles.stationListItem}>
                           <View style={{ flex: 1 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                               <Text style={styles.stationListCode}>{station.stationCode}</Text>
@@ -1392,7 +1401,7 @@ export default function TrackingScreen() {
                 )}
 
                 {liveBoard && !liveBoardLoading && liveBoard.trains.slice(0, 3).map((train, idx) => (
-                  <View key={idx} style={styles.trainRowMinimal}>
+                  <View key={`live-train-${train.trainNumber}-${idx}`} style={styles.trainRowMinimal}>
                     <View style={styles.trainRowLeft}>
                       <Text style={styles.trainNumText}>{train.trainNumber}</Text>
                       <Text style={styles.trainDestText}>{train.toCode || 'Unknown'}</Text>
