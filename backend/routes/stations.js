@@ -142,7 +142,8 @@ router.get('/:code/live', async (req, res) => {
 
     const json = await response.json();
     const board = json.data ?? json;
-    const stationName = board.station?.name || "";
+    const station = board.station || {};
+    const stationName = station.name || board.stationName || "";
 
     let coordinates = null;
 
@@ -150,16 +151,16 @@ router.get('/:code/live', async (req, res) => {
     if (stationName) {
       try {
         const searchQueries = [
-          `${stationName} Railway Station, Kerala`,
+          `${stationName} Railway Station, India`,
           `${stationName} Railway Station`,
           `${stationName} Station`
         ];
 
         for (const query of searchQueries) {
           console.log(`[GEO LOOKUP] 🌍 Trying: ${query}`);
-          const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
+          const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&limit=1`;
           const osmRes = await fetch(osmUrl, {
-            headers: { 'User-Agent': 'Thirakkundo-App-Backend-v2' }
+            headers: { 'User-Agent': 'Thirakkundo-App-Backend-v3' }
           });
           const osmData = await osmRes.json();
           
@@ -168,7 +169,7 @@ router.get('/:code/live', async (req, res) => {
               lat: parseFloat(osmData[0].lat),
               lng: parseFloat(osmData[0].lon)
             };
-            console.log(`[GEO LOOKUP] ✅ Found via "${query}": ${coordinates.lat}, ${coordinates.lng}`);
+            console.log(`[GEO LOOKUP] ✅ Found: ${coordinates.lat}, ${coordinates.lng}`);
             break; 
           }
         }
@@ -183,9 +184,9 @@ router.get('/:code/live', async (req, res) => {
         station: {
           code: stationCode,
           name: stationName,
-          zone: board.station?.zone || null,
-          division: board.station?.division || null,
-          state: board.station?.state || null,
+          zone: station.zone || station.zoneCode || null,
+          division: station.division || station.divisionCode || null,
+          state: station.state || (board.trains && board.trains[0]?.train?.source?.state) || null,
           coordinates: coordinates
         },
         queryingForNextHours: board.queryingForNextHours || 2,
@@ -224,7 +225,7 @@ router.get('/:code/live', async (req, res) => {
         timestamp: new Date().toISOString(),
         service: 'TrainAPI_V1',
         method: 'getLiveStationBoard',
-        _source: 'live_api_with_real_lookup'
+        _source: 'live_api_with_deep_lookup'
       }
     });
   } catch (err) {
