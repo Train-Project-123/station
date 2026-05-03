@@ -142,6 +142,10 @@ router.get('/:code/live', async (req, res) => {
 
     const json = await response.json();
     const board = json.data ?? json;
+    
+    // X-RAY LOG: See exactly what the API is sending
+    console.log(`[LIVE BOARD] 🕵️‍♂️ Raw data for ${stationCode}:`, JSON.stringify(board, null, 2));
+
     const station = board.station || {};
     const stationName = station.name || board.stationName || "";
 
