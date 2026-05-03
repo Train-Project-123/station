@@ -169,12 +169,22 @@ export default function TrackingScreen() {
   // ── Save to History Function ──────────────────────────────────────────────
   const addToHistory = async (trip) => {
     try {
+      // Ensure trip has a unique ID to prevent "duplicate key" crashes
+      const uniqueId = trip.id || `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      const tripWithId = { ...trip, id: uniqueId };
+
       const stored = await AsyncStorage.getItem('trip_history');
       const currentHistory = stored ? JSON.parse(stored) : [];
-      const newHistory = [trip, ...currentHistory.slice(0, 19)]; // Keep last 20
+      
+      // Filter out any existing trips with the same ID (deduplication)
+      const filteredHistory = currentHistory.filter(t => t.id !== uniqueId);
+      const newHistory = [tripWithId, ...filteredHistory.slice(0, 19)]; // Keep last 20
+      
       setTripHistory(newHistory);
       await AsyncStorage.setItem('trip_history', JSON.stringify(newHistory));
-    } catch (err) {}
+    } catch (err) {
+      console.error('[HISTORY] Save failed:', err.message);
+    }
   };
 
   // ── Dynamic Speed Watcher ─────────────────────────────────────────────────
