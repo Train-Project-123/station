@@ -132,6 +132,9 @@ export default function TrackingScreen() {
   const [isSpeedMonitorActive, setIsSpeedMonitorActive] = useState(false);
   const speedMonitorIntervalRef = useRef(null);
 
+  const [isViewModalOpen, setIsViewModalOpen] = useState(false);
+  const [viewingStation, setViewingStation] = useState(null);
+
   const loadAllStations = async () => {
     setAllStationsLoading(true);
     try {
@@ -1241,6 +1244,15 @@ export default function TrackingScreen() {
                           </View>
                           <View style={styles.stationActionRow}>
                             <TouchableOpacity 
+                              style={styles.stationViewBtn}
+                              onPress={() => {
+                                setViewingStation(station);
+                                setIsViewModalOpen(true);
+                              }}
+                            >
+                              <Ionicons name="eye-outline" size={18} color="#fafafa" />
+                            </TouchableOpacity>
+                            <TouchableOpacity 
                               style={styles.stationEditBtn}
                               onPress={() => {
                                 setIsEditMode(true);
@@ -1295,6 +1307,54 @@ export default function TrackingScreen() {
       </Modal>
     );
   };
+
+  const renderViewStationModal = () => (
+    <Modal
+      visible={isViewModalOpen}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setIsViewModalOpen(false)}
+    >
+      <View style={styles.confirmOverlay}>
+        <View style={[styles.confirmContent, { width: '90%', padding: 0, overflow: 'hidden' }]}>
+          <View style={{ backgroundColor: '#1e1b4b', padding: 24, width: '100%', alignItems: 'center' }}>
+            <Ionicons name="location" size={40} color="#818cf8" />
+            <Text style={[styles.confirmTitle, { marginTop: 12 }]}>Station Details</Text>
+          </View>
+          
+          <View style={{ padding: 24, width: '100%', gap: 16 }}>
+            <DetailItem label="Full Name" value={viewingStation?.stationName || '—'} />
+            <DetailItem label="Station Code" value={viewingStation?.stationCode || '—'} />
+            
+            <View style={{ flexDirection: 'row', gap: 20 }}>
+              <View style={{ flex: 1 }}>
+                <DetailItem label="Zone" value={viewingStation?.zone || '—'} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <DetailItem label="State" value={viewingStation?.state || '—'} />
+              </View>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 20 }}>
+              <View style={{ flex: 1 }}>
+                <DetailItem label="Latitude" value={viewingStation?.coordinates?.lat || viewingStation?.location?.coordinates?.[1] || '—'} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <DetailItem label="Longitude" value={viewingStation?.coordinates?.lng || viewingStation?.location?.coordinates?.[0] || '—'} />
+              </View>
+            </View>
+          </View>
+
+          <TouchableOpacity 
+            style={[styles.saveBtn, { width: '80%', marginBottom: 24, marginTop: 0 }]}
+            onPress={() => setIsViewModalOpen(false)}
+          >
+            <Text style={styles.saveBtnText}>Close</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -1552,6 +1612,7 @@ export default function TrackingScreen() {
       {renderAdminPanel()}
       {renderAuthModal()}
       {renderConfirmModal()}
+      {renderViewStationModal()}
     </SafeAreaView>
   );
 }
@@ -1883,6 +1944,14 @@ const styles = StyleSheet.create({
   stationActionRow: {
     flexDirection: 'row',
     gap: 8,
+  },
+  stationViewBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#27272a',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   stationEditBtn: {
     width: 36,
