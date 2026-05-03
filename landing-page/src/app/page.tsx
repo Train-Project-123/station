@@ -21,7 +21,7 @@ export default function LandingPage() {
           clearInterval(interval);
           setDownloading(false);
           const link = document.createElement('a');
-          link.href = 'https://github.com/Train-Project-123/station/releases/download/v1.3/application-8e8365e8-7d33-4be5-9803-9d29087d85cf.apk';
+          link.href = 'https://github.com/Train-Project-123/station/releases/download/v1.4/application-fda7d6df-7007-462d-b6f2-33327f960c51.apk';
           link.setAttribute('download', 'Thirakkundo.apk');
           document.body.appendChild(link);
           link.click();
@@ -86,7 +86,7 @@ export default function LandingPage() {
                 >
                   {downloading ? `Processing ${progress}%` : "Download Android APK"}
                 </Button>
-                <span className="text-[10px] font-mono font-black uppercase tracking-widest text-indigo-900/60 font-bold tracking-widest">Serial No: THRK-2026-V1.3</span>
+                <span className="text-[10px] font-mono font-black uppercase tracking-widest text-indigo-900/60 font-bold tracking-widest">Serial No: THRK-2026-V1.4</span>
               </div>
             </div>
           </div>
