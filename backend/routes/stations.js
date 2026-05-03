@@ -146,22 +146,31 @@ router.get('/:code/live', async (req, res) => {
 
     let coordinates = null;
 
-    // REAL-TIME LOOKUP: Fetch coordinates from OpenStreetMap if station name exists
+    // REAL-TIME LOOKUP: Multi-step search for best coordinates
     if (stationName) {
       try {
-        console.log(`[GEO LOOKUP] 🌍 Finding real coordinates for: ${stationName} Railway Station`);
-        const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(stationName + ' Railway Station')}&format=json&limit=1`;
-        const osmRes = await fetch(osmUrl, {
-          headers: { 'User-Agent': 'Thirakkundo-App-Backend' }
-        });
-        const osmData = await osmRes.json();
-        
-        if (osmData && osmData.length > 0) {
-          coordinates = {
-            lat: parseFloat(osmData[0].lat),
-            lng: parseFloat(osmData[0].lon)
-          };
-          console.log(`[GEO LOOKUP] ✅ Found: ${coordinates.lat}, ${coordinates.lng}`);
+        const searchQueries = [
+          `${stationName} Railway Station, Kerala`,
+          `${stationName} Railway Station`,
+          `${stationName} Station`
+        ];
+
+        for (const query of searchQueries) {
+          console.log(`[GEO LOOKUP] 🌍 Trying: ${query}`);
+          const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
+          const osmRes = await fetch(osmUrl, {
+            headers: { 'User-Agent': 'Thirakkundo-App-Backend-v2' }
+          });
+          const osmData = await osmRes.json();
+          
+          if (osmData && osmData.length > 0) {
+            coordinates = {
+              lat: parseFloat(osmData[0].lat),
+              lng: parseFloat(osmData[0].lon)
+            };
+            console.log(`[GEO LOOKUP] ✅ Found via "${query}": ${coordinates.lat}, ${coordinates.lng}`);
+            break; 
+          }
         }
       } catch (geoErr) {
         console.warn(`[GEO LOOKUP] ❌ Failed to find coordinates:`, geoErr.message);
