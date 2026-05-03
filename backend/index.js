@@ -41,26 +41,29 @@ app.use((err, req, res, next) => {
 });
 
 // ─── MongoDB Connection ───────────────────────────────────────────────────────
-mongoose
-  .connect(MONGO_URI)
-  .then(() => {
-    console.log('[DB] ✅ MongoDB connected:', MONGO_URI);
-    app.listen(PORT, () => {
-      console.log(`[SERVER] 🚀 Running on http://localhost:${PORT}`);
-      console.log(`[API]    GET http://localhost:${PORT}/api/stations/nearby?lat=11.152122&lng=75.893304&radius=5000`);
-    });
-  })
-  .catch((err) => {
-    console.error('[DB] ❌ MongoDB connection failed:', err.message);
-    process.exit(1);
-  });
+const connectDB = async () => {
+  try {
+    await mongoose.connect(MONGO_URI);
+    console.log('[DB] ✅ MongoDB connected');
+  } catch (err) {
+    console.error('[DB] ❌ Connection failed:', err.message);
+    setTimeout(connectDB, 5000); // Retry every 5s
+  }
+};
+
+connectDB();
 
 mongoose.connection.on('disconnected', () => {
-  console.warn('[DB] ⚠️  MongoDB disconnected.');
+  console.warn('[DB] ⚠️ Disconnected. Attempting reconnect...');
+  connectDB();
+});
+
+app.listen(PORT, () => {
+  console.log(`[SERVER] 🚀 Running on http://localhost:${PORT}`);
 });
 
 process.on('SIGINT', async () => {
   await mongoose.connection.close();
-  console.log('[DB] MongoDB connection closed. Exiting...');
+  console.log('[DB] Connection closed. Exiting...');
   process.exit(0);
 });
