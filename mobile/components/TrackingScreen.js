@@ -11,15 +11,19 @@ import {
   Linking,
   TouchableOpacity,
   Image,
+  TextInput,
+  Modal,
+  KeyboardAvoidingView,
 } from 'react-native';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import { Accelerometer } from 'expo-sensors';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BACKGROUND_LOCATION_TASK } from '../utils/backgroundTask';
 
 import { haversineDistance, formatDistance, isWithinBoundary } from '../utils/haversine';
-import { fetchNearbyStations, fetchStationLiveBoard } from '../utils/api';
+import { fetchNearbyStations, fetchStationLiveBoard, addStation, fetchAllStations, verifyAdminPasscode, updateStation, deleteStation } from '../utils/api';
 import { performMatch } from '../utils/trainDetection';
 import { getRoadDistance } from '../utils/ors';
 import { useToast } from './Toast';
@@ -72,7 +76,6 @@ export default function TrackingScreen() {
   const [isTracking, setIsTracking] = useState(false);
   const [userLocation, setUserLocation] = useState(null);
   const [nearestStation, setNearestStation] = useState(null);
-  const [allStations, setAllStations] = useState([]);
   const [distanceMeters, setDistanceMeters] = useState(null); // Straight-line distance
   const [roadDistance, setRoadDistance] = useState(null);     // ORS road distance
   const [roadDuration, setRoadDuration] = useState(null);     // ORS road duration
@@ -86,10 +89,42 @@ export default function TrackingScreen() {
   const [liveBoardError, setLiveBoardError] = useState(null);
   const [matchedTrainData, setMatchedTrainData] = useState(null);
   
-  // ── Navigation State ──────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState('track'); // 'track', 'speed', 'history', 'settings'
   const [liveSpeed, setLiveSpeed] = useState(0);
   const [tripHistory, setTripHistory] = useState([]);
+  
+  // ── Drawer & Admin State ──
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState('add'); // 'add', 'list'
+  const [allStations, setAllStations] = useState([]);
+  const [allStationsLoading, setAllStationsLoading] = useState(false);
+
+  // ── Auth & Security State ──
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [passcodeInput, setPasscodeInput] = useState('');
+  const [authError, setAuthError] = useState(false);
+
+  // ── Admin Form State ──
+  const [adminForm, setAdminForm] = useState({
+    name: '',
+    code: '',
+    zone: '',
+    state: '',
+    lat: '',
+    lng: ''
+  });
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [editingStationId, setEditingStationId] = useState(null);
+  const [isEditMode, setIsEditMode] = useState(false);
+
+  // ── Confirmation Modal State ──
+  const [confirmModal, setConfirmModal] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    onConfirm: null,
+    type: 'danger' // 'danger' | 'info' | 'warning'
+  });
 
   // ── Speed Monitor State (Step 1) ──────────────────────────────────────────
   const [speedHistory, setSpeedHistory] = useState([]); // Rolling last 5 speeds
@@ -97,12 +132,35 @@ export default function TrackingScreen() {
   const [isSpeedMonitorActive, setIsSpeedMonitorActive] = useState(false);
   const speedMonitorIntervalRef = useRef(null);
 
+  const loadAllStations = async () => {
+    setAllStationsLoading(true);
+    try {
+      const stations = await fetchAllStations();
+      setAllStations(stations);
+    } catch (err) {
+      showToast('Error loading stations', 'error');
+    } finally {
+      setAllStationsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isDrawerOpen && drawerTab === 'list') {
+      loadAllStations();
+    }
+  }, [isDrawerOpen, drawerTab]);
+
   // ── Load History on Mount ──────────────────────────────────────────────────
   useEffect(() => {
     const loadHistory = async () => {
       try {
         const stored = await AsyncStorage.getItem('trip_history');
-        if (stored) setTripHistory(JSON.parse(stored));
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          // Deduplicate by ID just in case old data has collisions
+          const unique = parsed.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
+          setTripHistory(unique);
+        }
       } catch (err) {}
     };
     loadHistory();
@@ -276,6 +334,7 @@ export default function TrackingScreen() {
 
   const intervalRef = useRef(null);
   const currentStatusRef = useRef(TRACKING_STATUS.IDLE);
+  const [intervalMs, setIntervalMs] = useState(null); // Managed by status effects
 
   // ── Animations ────────────────────────────────────────────────────────────
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -302,7 +361,7 @@ export default function TrackingScreen() {
           const lastId = await AsyncStorage.getItem('last_history_id');
           if (data.trainNumber !== lastId) {
             addToHistory({
-              id: Date.now().toString(),
+              id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`,
               trainName: data.trainName,
               trainNumber: data.trainNumber,
               date: new Date().toLocaleDateString(),
@@ -391,6 +450,21 @@ export default function TrackingScreen() {
     }
   }, [isTracking]);
 
+  // ── Effect: Handle Tracking Interval based on ms state ──
+  useEffect(() => {
+    if (isTracking && intervalMs) {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = setInterval(() => {
+        checkLocation();
+      }, intervalMs);
+      return () => {
+        if (intervalRef.current) clearInterval(intervalRef.current);
+      };
+    } else {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    }
+  }, [isTracking, intervalMs, checkLocation]);
+
   // ── Core geofencing check ─────────────────────────────────────────────────
   const checkLocation = useCallback(async () => {
     try {
@@ -455,7 +529,7 @@ export default function TrackingScreen() {
         if (prevStatus !== TRACKING_STATUS.INSIDE) {
           showToast(`You are near ${nearest.stationName}`, 'success');
           setIntervalMode('30s');
-          scheduleInterval(INTERVAL_INSIDE);
+          setIntervalMs(INTERVAL_INSIDE);
 
           // ── Auto-fetch live board when user first enters station ──
           setLiveBoard(null);
@@ -478,7 +552,7 @@ export default function TrackingScreen() {
         if (prevStatus === TRACKING_STATUS.INSIDE || prevStatus === TRACKING_STATUS.LOADING) {
           showToast('You are outside the boundary', 'warning');
           setIntervalMode('5min');
-          scheduleInterval(INTERVAL_OUTSIDE);
+          setIntervalMs(INTERVAL_OUTSIDE);
         }
         setTrackingStatus(TRACKING_STATUS.OUTSIDE);
         currentStatusRef.current = TRACKING_STATUS.OUTSIDE;
@@ -490,15 +564,23 @@ export default function TrackingScreen() {
       setTrackingStatus(TRACKING_STATUS.ERROR);
       currentStatusRef.current = TRACKING_STATUS.ERROR;
     }
-  }, [showToast]);
-
-  // ── Interval scheduler ────────────────────────────────────────────────────
-  const scheduleInterval = useCallback((ms) => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(() => {
-      checkLocation();
-    }, ms);
-  }, [checkLocation]);
+  }, [
+    showToast, 
+    setLastChecked, 
+    setUserLocation, 
+    setLocationError, 
+    setAllStations, 
+    setNearestStation, 
+    setDistanceMeters, 
+    setRoadDistance, 
+    setRoadDuration, 
+    setLiveBoard, 
+    setLiveBoardError, 
+    setLiveBoardLoading, 
+    setTrackingStatus, 
+    setIntervalMode,
+    setIntervalMs
+  ]);
 
   // ── Begin tracking (called after permission granted) ──────────────────────
   const beginTracking = useCallback(async () => {
@@ -506,20 +588,26 @@ export default function TrackingScreen() {
     currentStatusRef.current = TRACKING_STATUS.LOADING;
     setIsTracking(true);
     setLocationError(null);
+    setIntervalMs(INTERVAL_INSIDE);
     
-    try {
-      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-        accuracy: Location.Accuracy.Balanced,
-        distanceInterval: 50, // Only trigger if moved 50 meters
-        showsBackgroundLocationIndicator: true,
-      });
-    } catch (e) {
-      console.log('Background location start error:', e);
-    }
+      try {
+        // Expo Go Android doesn't support background location
+        if (Platform.OS === 'android' && Constants?.appOwnership === 'expo') {
+          console.log('[LOCATION] Background tracking skipped (Expo Go limitation)');
+        } else {
+          await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+            accuracy: Location.Accuracy.Balanced,
+            distanceInterval: 50,
+            showsBackgroundLocationIndicator: true,
+          });
+        }
+      } catch (e) {
+        console.log('Background location start error:', e);
+      }
     
     await checkLocation();
     showToast('Location fetched successfully', 'info');
-  }, [checkLocation, showToast]);
+  }, [checkLocation, showToast, setIntervalMs]);
 
   // ── Manual start (button press) ───────────────────────────────────────────
   const startTracking = useCallback(async () => {
@@ -541,14 +629,15 @@ export default function TrackingScreen() {
     setTrackingStatus(TRACKING_STATUS.IDLE);
     currentStatusRef.current = TRACKING_STATUS.IDLE;
     setIntervalMode(null);
+    setIntervalMs(null);
     showToast('Tracking stopped', 'default');
-  }, [showToast]);
+  }, [showToast, setIntervalMs]);
 
   const confirmBoarding = async () => {
     showToast('Boarding Confirmed!', 'success');
     if (matchedTrainData) {
       addToHistory({
-        id: Date.now().toString(),
+        id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         trainName: matchedTrainData.train.trainName,
         trainNumber: matchedTrainData.train.trainNumber,
         date: new Date().toLocaleDateString(),
@@ -728,6 +817,451 @@ export default function TrackingScreen() {
 
   const sc = statusConfig[trackingStatus] || statusConfig[TRACKING_STATUS.IDLE];
 
+  const renderAuthModal = () => (
+    <Modal
+      visible={isAuthModalOpen}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setIsAuthModalOpen(false)}
+    >
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.authModalContainer}
+      >
+        <TouchableOpacity 
+          style={styles.authModalBackdrop} 
+          activeOpacity={1} 
+          onPress={() => setIsAuthModalOpen(false)} 
+        />
+        <View style={styles.authModalContent}>
+          <View style={styles.authModalHeader}>
+            <Ionicons name="lock-closed" size={32} color="#6366f1" />
+            <Text style={styles.authModalTitle}>ADMIN ACCESS</Text>
+            <Text style={styles.authModalSub}>Enter 4-digit passcode</Text>
+          </View>
+          
+          <View style={styles.passcodeContainer}>
+            <TextInput
+              style={[styles.passcodeInput, authError && { borderColor: '#ef4444' }]}
+              placeholder="••••"
+              placeholderTextColor="#27272a"
+              keyboardType="number-pad"
+              maxLength={4}
+              secureTextEntry
+              autoFocus
+              value={passcodeInput}
+              onChangeText={async (val) => {
+                setPasscodeInput(val);
+                setAuthError(false);
+                if (val.length === 4) {
+                  try {
+                    const res = await verifyAdminPasscode(val);
+                    if (res.success) {
+                      setTimeout(() => {
+                        setIsAuthModalOpen(false);
+                        setPasscodeInput('');
+                        setIsDrawerOpen(true);
+                        showToast('Welcome, Admin', 'success');
+                      }, 300);
+                    } else {
+                      setAuthError(true);
+                      showToast('Invalid Passcode', 'error');
+                      setPasscodeInput('');
+                    }
+                  } catch (e) {
+                    showToast('Connection Error', 'error');
+                  }
+                }
+              }}
+            />
+          </View>
+
+          <TouchableOpacity 
+            style={styles.authCancelBtn}
+            onPress={() => setIsAuthModalOpen(false)}
+          >
+            <Text style={styles.authCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+
+  const renderConfirmModal = () => (
+    <Modal
+      visible={confirmModal.visible}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setConfirmModal(p => ({...p, visible: false}))}
+    >
+      <View style={styles.confirmOverlay}>
+        <View style={styles.confirmContent}>
+          <View style={[styles.confirmIconContainer, { backgroundColor: confirmModal.type === 'danger' ? '#450a0a' : '#1e1b4b' }]}>
+            <Ionicons 
+              name={confirmModal.type === 'danger' ? "trash-outline" : "alert-circle-outline"} 
+              size={32} 
+              color={confirmModal.type === 'danger' ? "#ef4444" : "#6366f1"} 
+            />
+          </View>
+          <Text style={styles.confirmTitle}>{confirmModal.title}</Text>
+          <Text style={styles.confirmMessage}>{confirmModal.message}</Text>
+          
+          <View style={styles.confirmActionRow}>
+            <TouchableOpacity 
+              style={styles.confirmCancelBtn}
+              onPress={() => setConfirmModal(p => ({...p, visible: false}))}
+            >
+              <Text style={styles.confirmCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.confirmBtn, { backgroundColor: confirmModal.type === 'danger' ? '#ef4444' : '#6366f1' }]}
+              onPress={() => {
+                if (confirmModal.onConfirm) confirmModal.onConfirm();
+                setConfirmModal(p => ({...p, visible: false}));
+              }}
+            >
+              <Text style={styles.confirmBtnText}>Confirm</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  const renderAdminPanel = () => {
+    if (!isDrawerOpen) return null;
+    return (
+      <Modal
+        visible={isDrawerOpen}
+        animationType="slide"
+        onRequestClose={() => {
+          setConfirmModal({
+            visible: true,
+            title: 'Exit Admin?',
+            message: 'Are you sure you want to exit the admin panel?',
+            type: 'info',
+            onConfirm: () => setIsDrawerOpen(false)
+          });
+        }}
+      >
+        <View style={[styles.drawerContent, { width: '100%' }]}>
+          <SafeAreaView style={{ flex: 1, backgroundColor: '#09090b' }}>
+            <View style={styles.drawerHeader}>
+              <View>
+                <Text style={styles.drawerTitle}>ADMIN PANEL</Text>
+                <Text style={{ color: '#71717a', fontSize: 12 }}>Manage Stations & Metadata</Text>
+              </View>
+              <TouchableOpacity 
+                style={styles.exitAdminBtn}
+                onPress={() => {
+                  setConfirmModal({
+                    visible: true,
+                    title: 'Exit Admin?',
+                    message: 'Return to tracking mode?',
+                    type: 'info',
+                    onConfirm: () => setIsDrawerOpen(false)
+                  });
+                }}
+              >
+                <Ionicons name="exit-outline" size={20} color="#ef4444" />
+                <Text style={styles.exitAdminText}>Exit</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.drawerTabs}>
+              <TouchableOpacity 
+                style={[styles.drawerTab, (drawerTab === 'add' || isEditMode) && styles.drawerTabActive]} 
+                onPress={() => {
+                  setIsEditMode(false);
+                  setEditingStationId(null);
+                  setDrawerTab('add');
+                }}
+              >
+                <Ionicons name="add-circle" size={18} color={(drawerTab === 'add' || isEditMode) ? '#fff' : '#71717a'} />
+                <Text style={[styles.drawerTabText, (drawerTab === 'add' || isEditMode) && styles.drawerTabTextActive]}>
+                  {isEditMode ? 'Editing' : 'Add Station'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.drawerTab, drawerTab === 'list' && !isEditMode && styles.drawerTabActive]} 
+                onPress={() => {
+                  setIsEditMode(false);
+                  setDrawerTab('list');
+                }}
+              >
+                <Ionicons name="list" size={18} color={(drawerTab === 'list' && !isEditMode) ? '#fff' : '#71717a'} />
+                <Text style={[styles.drawerTabText, (drawerTab === 'list' && !isEditMode) && styles.drawerTabTextActive]}>Directory</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ flex: 1 }}>
+              <View style={{ padding: 20 }}>
+                {(drawerTab === 'add' || isEditMode) ? (
+                  <View style={{ gap: 12 }}>
+                    <Text style={styles.minimalLabel}>{isEditMode ? 'UPDATE STATION' : 'MANUAL ADDITION'}</Text>
+                    {!isEditMode && (
+                      <View style={styles.inputGroup}>
+                        <Text style={styles.inputLabel}>Station Code</Text>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <View style={[styles.inputWrapper, { flex: 1 }]}>
+                            <TextInput 
+                              style={styles.nativeInput}
+                              placeholder="e.g. CLT"
+                              placeholderTextColor="#3f3f46"
+                              onChangeText={(val) => setAdminForm(p => ({...p, code: val.toUpperCase()}))}
+                              value={adminForm.code}
+                            />
+                          </View>
+                          <TouchableOpacity 
+                            style={styles.fetchBtn}
+                            onPress={async () => {
+                              if(!adminForm.code) return;
+                              setAdminLoading(true);
+                              try {
+                                const res = await fetchStationLiveBoard(adminForm.code);
+                                if(res && res.data && res.data.station) {
+                                  const s = res.data.station;
+                                  setAdminForm(p => ({
+                                    ...p, 
+                                    name: s.name || p.name,
+                                    zone: s.zone || p.zone,
+                                    state: s.state || p.state,
+                                    lat: s.coordinates?.lat?.toString() || p.lat,
+                                    lng: s.coordinates?.lng?.toString() || p.lng
+                                  }));
+                                  showToast('Details fetched!', 'success');
+                                }
+                              } catch(e) {
+                                showToast('Fetch failed', 'error');
+                              } finally {
+                                setAdminLoading(false);
+                              }
+                            }}
+                          >
+                            <Text style={styles.fetchBtnText}>Fetch</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputLabel}>Station Name</Text>
+                      <View style={styles.inputWrapper}>
+                        <TextInput 
+                          style={styles.nativeInput}
+                          placeholder="e.g. Kozhikode Main"
+                          placeholderTextColor="#3f3f46"
+                          onChangeText={(val) => setAdminForm(p => ({...p, name: val}))}
+                          value={adminForm.name}
+                        />
+                      </View>
+                    </View>
+
+                    {isEditMode && (
+                      <View style={styles.inputGroup}>
+                        <Text style={styles.inputLabel}>Station Code</Text>
+                        <View style={styles.inputWrapper}>
+                          <TextInput 
+                            style={styles.nativeInput}
+                            placeholder="e.g. CLT"
+                            placeholderTextColor="#3f3f46"
+                            onChangeText={(val) => setAdminForm(p => ({...p, code: val.toUpperCase()}))}
+                            value={adminForm.code}
+                          />
+                        </View>
+                      </View>
+                    )}
+
+                    <View style={{ flexDirection: 'row', gap: 12 }}>
+                      <View style={[styles.inputGroup, { flex: 1 }]}>
+                        <Text style={styles.inputLabel}>Zone</Text>
+                        <View style={styles.inputWrapper}>
+                          <TextInput 
+                            style={styles.nativeInput}
+                            placeholder="SR"
+                            placeholderTextColor="#3f3f46"
+                            onChangeText={(val) => setAdminForm(p => ({...p, zone: val}))}
+                            value={adminForm.zone}
+                          />
+                        </View>
+                      </View>
+                      <View style={[styles.inputGroup, { flex: 1 }]}>
+                        <Text style={styles.inputLabel}>State</Text>
+                        <View style={styles.inputWrapper}>
+                          <TextInput 
+                            style={styles.nativeInput}
+                            placeholder="Kerala"
+                            placeholderTextColor="#3f3f46"
+                            onChangeText={(val) => setAdminForm(p => ({...p, state: val}))}
+                            value={adminForm.state}
+                          />
+                        </View>
+                      </View>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', gap: 12 }}>
+                      <View style={[styles.inputGroup, { flex: 1 }]}>
+                        <Text style={styles.inputLabel}>Lat</Text>
+                        <View style={styles.inputWrapper}>
+                          <TextInput 
+                            style={styles.nativeInput}
+                            placeholder="11.25"
+                            keyboardType="numeric"
+                            placeholderTextColor="#3f3f46"
+                            onChangeText={(val) => setAdminForm(p => ({...p, lat: val}))}
+                            value={adminForm.lat}
+                          />
+                        </View>
+                      </View>
+                      <View style={[styles.inputGroup, { flex: 1 }]}>
+                        <Text style={styles.inputLabel}>Lng</Text>
+                        <View style={styles.inputWrapper}>
+                          <TextInput 
+                            style={styles.nativeInput}
+                            placeholder="75.78"
+                            keyboardType="numeric"
+                            placeholderTextColor="#3f3f46"
+                            onChangeText={(val) => setAdminForm(p => ({...p, lng: val}))}
+                            value={adminForm.lng}
+                          />
+                        </View>
+                      </View>
+                    </View>
+
+                    <TouchableOpacity 
+                      style={[styles.saveBtn, { marginTop: 20 }]}
+                      disabled={adminLoading}
+                      onPress={async () => {
+                        setAdminLoading(true);
+                        try {
+                          const data = {
+                            stationName: adminForm.name,
+                            stationCode: adminForm.code,
+                            zone: adminForm.zone,
+                            state: adminForm.state,
+                            latitude: parseFloat(adminForm.lat),
+                            longitude: parseFloat(adminForm.lng)
+                          };
+
+                          let res;
+                          if (isEditMode) {
+                            res = await updateStation(editingStationId, data);
+                          } else {
+                            res = await addStation(data);
+                          }
+
+                          if(res.success) {
+                            showToast(isEditMode ? 'Station updated!' : 'Station added!', 'success');
+                            setAdminForm({ name: '', code: '', zone: '', state: '', lat: '', lng: '' });
+                            setIsEditMode(false);
+                            setEditingStationId(null);
+                            setDrawerTab('list');
+                            loadAllStations();
+                          } else {
+                            showToast(res.message || 'Operation failed', 'error');
+                          }
+                        } catch(e) {
+                          showToast('Network error', 'error');
+                        } finally {
+                          setAdminLoading(false);
+                        }
+                      }}
+                    >
+                      {adminLoading ? (
+                        <Text style={styles.saveBtnText}>Processing...</Text>
+                      ) : (
+                        <Text style={styles.saveBtnText}>{isEditMode ? 'Update Station' : 'Add Station'}</Text>
+                      )}
+                    </TouchableOpacity>
+
+                    {isEditMode && (
+                      <TouchableOpacity 
+                        style={styles.cancelEditBtn}
+                        onPress={() => {
+                          setIsEditMode(false);
+                          setEditingStationId(null);
+                          setAdminForm({ name: '', code: '', zone: '', state: '', lat: '', lng: '' });
+                          setDrawerTab('list');
+                        }}
+                      >
+                        <Text style={styles.cancelEditText}>Cancel Edit</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ) : (
+                  <View style={{ gap: 12 }}>
+                    <Text style={styles.minimalLabel}>STATION DIRECTORY ({allStations.length})</Text>
+                    {allStationsLoading ? (
+                      <Text style={{ color: '#71717a', textAlign: 'center', marginTop: 20 }}>Loading database...</Text>
+                    ) : allStations.length === 0 ? (
+                      <Text style={{ color: '#71717a', textAlign: 'center', marginTop: 20 }}>No stations found.</Text>
+                    ) : (
+                      allStations.map((station, i) => (
+                        <View key={station._id || i} style={styles.stationListItem}>
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                              <Text style={styles.stationListCode}>{station.stationCode}</Text>
+                              <Text style={styles.stationListName} numberOfLines={1}>{station.stationName}</Text>
+                            </View>
+                            <Text style={styles.stationListSub}>{station.zone} • {station.state}</Text>
+                          </View>
+                          <View style={styles.stationActionRow}>
+                            <TouchableOpacity 
+                              style={styles.stationEditBtn}
+                              onPress={() => {
+                                setIsEditMode(true);
+                                setEditingStationId(station._id);
+                                setAdminForm({
+                                  name: station.stationName,
+                                  code: station.stationCode,
+                                  zone: station.zone,
+                                  state: station.state,
+                                  lat: (station.coordinates?.lat ?? station.location?.coordinates?.[1] ?? '').toString(),
+                                  lng: (station.coordinates?.lng ?? station.location?.coordinates?.[0] ?? '').toString()
+                                });
+                                setDrawerTab('add');
+                              }}
+                            >
+                              <Ionicons name="create-outline" size={18} color="#6366f1" />
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                              style={styles.stationDeleteBtn}
+                              onPress={() => {
+                                setConfirmModal({
+                                  visible: true,
+                                  title: 'Delete Station?',
+                                  message: `Are you sure you want to remove ${station.stationName}? This cannot be undone.`,
+                                  type: 'danger',
+                                  onConfirm: async () => {
+                                    try {
+                                      const res = await deleteStation(station._id);
+                                      if (res.success) {
+                                        showToast('Station deleted', 'success');
+                                        loadAllStations();
+                                      }
+                                    } catch (e) {
+                                      showToast('Delete failed', 'error');
+                                    }
+                                  }
+                                });
+                              }}
+                            >
+                              <Ionicons name="trash-outline" size={18} color="#ef4444" />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))
+                    )}
+                  </View>
+                )}
+              </View>
+            </ScrollView>
+          </SafeAreaView>
+        </View>
+      </Modal>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor="#09090b" />
@@ -743,12 +1277,15 @@ export default function TrackingScreen() {
             <Text style={styles.appSubtitle}>Smart Auto-Detection</Text>
           </View>
           <View style={styles.headerRight}>
-            <View style={styles.locationGrantedPill}>
-              <View style={[styles.greenDot, isTracking ? { backgroundColor: '#10b981' } : { backgroundColor: '#71717a' }]} />
-              <Text style={[styles.locationGrantedText, isTracking ? { color: '#10b981' } : { color: '#a1a1aa' }]}>
-                {isTracking ? 'Live' : 'Paused'}
-              </Text>
-            </View>
+            <TouchableOpacity 
+              style={styles.menuBtn}
+              onPress={() => {
+                setDrawerTab('list');
+                setIsAuthModalOpen(true);
+              }}
+            >
+              <Ionicons name="grid" size={20} color="#fafafa" />
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -913,6 +1450,34 @@ export default function TrackingScreen() {
         {activeTab === 'settings' && (
           <View style={styles.tabContent}>
             <View style={styles.minimalCard}>
+              <Text style={styles.minimalLabel}>QUICK ACTIONS</Text>
+              <TouchableOpacity 
+                style={[styles.saveBtn, { marginTop: 0 }]}
+                onPress={() => {
+                  setDrawerTab('add');
+                  setIsAuthModalOpen(true);
+                }}
+              >
+                <Text style={styles.saveBtnText}>Open Admin Panel</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={[styles.minimalCard, { marginTop: 16 }]}>
+              <Text style={styles.minimalLabel}>DATA MANAGEMENT</Text>
+              <TouchableOpacity 
+                style={[styles.saveBtn, { backgroundColor: '#450a0a', shadowColor: '#ef4444' }]}
+                onPress={async () => {
+                  setTripHistory([]);
+                  await AsyncStorage.removeItem('trip_history');
+                  await AsyncStorage.removeItem('last_history_id');
+                  showToast('History cleared!', 'info');
+                }}
+              >
+                <Text style={styles.saveBtnText}>Clear Journey History</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={[styles.minimalCard, { marginTop: 16 }]}>
               <Text style={styles.minimalLabel}>DEBUG INFO</Text>
               {userLocation ? (
                 <View style={styles.debugRow}>
@@ -950,6 +1515,9 @@ export default function TrackingScreen() {
           <Text style={[styles.navText, activeTab === 'settings' && styles.navTextActive]}>Settings</Text>
         </TouchableOpacity>
       </View>
+      {renderAdminPanel()}
+      {renderAuthModal()}
+      {renderConfirmModal()}
     </SafeAreaView>
   );
 }
@@ -1192,6 +1760,362 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#52525b',
     fontWeight: '500',
+  },
+
+  // ── Confirmation Modal Styles ──
+  confirmOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  confirmContent: {
+    width: '85%',
+    backgroundColor: '#09090b',
+    borderRadius: 20,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#27272a',
+    alignItems: 'center',
+  },
+  confirmIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  confirmTitle: {
+    color: '#fafafa',
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  confirmMessage: {
+    color: '#71717a',
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  confirmActionRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  confirmCancelBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#18181b',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  confirmCancelText: {
+    color: '#fafafa',
+    fontWeight: '600',
+  },
+  confirmBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  confirmBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+
+  // ── Admin Panel / Drawer Styles ──
+  exitAdminBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#450a0a',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#ef444433',
+  },
+  exitAdminText: {
+    color: '#ef4444',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  stationActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  stationEditBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#1e1b4b',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stationDeleteBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#450a0a',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cancelEditBtn: {
+    marginTop: 12,
+    alignItems: 'center',
+    padding: 10,
+  },
+  cancelEditText: {
+    color: '#71717a',
+    fontSize: 14,
+    textDecorationLine: 'underline',
+  },
+  authModalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  authModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+  },
+  authModalContent: {
+    width: '80%',
+    backgroundColor: '#09090b',
+    borderRadius: 24,
+    padding: 30,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    ...Platform.select({
+      web: { boxShadow: '0 20px 40px rgba(0,0,0,0.6)' },
+      default: { elevation: 10 }
+    })
+  },
+  authModalHeader: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  authModalTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#fafafa',
+    marginTop: 12,
+    letterSpacing: 2,
+  },
+  authModalSub: {
+    fontSize: 13,
+    color: '#71717a',
+    marginTop: 4,
+  },
+  passcodeContainer: {
+    width: '100%',
+    marginBottom: 24,
+  },
+  passcodeInput: {
+    width: '100%',
+    height: 60,
+    backgroundColor: '#18181b',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#27272a',
+    color: '#fff',
+    fontSize: 32,
+    textAlign: 'center',
+    letterSpacing: 10,
+    fontWeight: '700',
+  },
+  authCancelBtn: {
+    padding: 10,
+  },
+  authCancelText: {
+    color: '#71717a',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // ── Drawer Styles ──
+  drawerOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+    flexDirection: 'row',
+  },
+  drawerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+  },
+  drawerContent: {
+    width: '85%',
+    backgroundColor: '#09090b',
+    height: '100%',
+    borderRightWidth: 1,
+    borderRightColor: '#27272a',
+    ...Platform.select({
+      web: { boxShadow: '10px 0 30px rgba(0,0,0,0.5)' },
+      default: { elevation: 20 }
+    })
+  },
+  drawerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#18181b',
+  },
+  drawerTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#fff',
+    letterSpacing: 2,
+  },
+  drawerTabs: {
+    flexDirection: 'row',
+    padding: 20,
+    gap: 12,
+  },
+  drawerTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  drawerTabActive: {
+    backgroundColor: '#6366f1',
+    borderColor: '#818cf8',
+  },
+  drawerTabText: {
+    fontSize: 13,
+    color: '#71717a',
+    fontWeight: '700',
+  },
+  drawerTabTextActive: {
+    color: '#fff',
+  },
+  menuBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#18181b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stationListItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: '#18181b',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#27272a',
+    marginBottom: 8,
+  },
+  stationListLeft: {
+    flex: 1,
+    gap: 4,
+  },
+  stationListCode: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#818cf8', // Bright indigo
+    letterSpacing: 1,
+  },
+  stationListName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fafafa',
+  },
+  stationListSub: {
+    fontSize: 12,
+    color: '#a1a1aa', // Bright zinc
+    marginTop: 2,
+  },
+  stationListMeta: {
+    fontSize: 11,
+    color: '#71717a',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+
+  // ── Admin Form Styles ──
+  inputGroup: {
+    marginBottom: 10,
+  },
+  inputLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#71717a',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  inputWrapper: {
+    backgroundColor: '#09090b',
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    height: 44,
+    justifyContent: 'center',
+  },
+  nativeInput: {
+    color: '#fff',
+    fontSize: 14,
+    height: '100%',
+  },
+  fetchBtn: {
+    backgroundColor: '#27272a',
+    paddingHorizontal: 15,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+  },
+  fetchBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  saveBtn: {
+    backgroundColor: '#6366f1',
+    height: 48,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+    shadowColor: '#6366f1',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  saveBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
 
   // ── Main Screen ──

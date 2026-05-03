@@ -3,7 +3,8 @@
  * Live backend hosted on Render
  */
 
-const API_BASE_URL = 'https://station-wzhe.onrender.com';
+// const API_BASE_URL = 'https://station-wzhe.onrender.com';
+const API_BASE_URL = 'http://192.168.1.4:5000';
 
 /**
  * Fetch nearby stations from the backend
@@ -137,3 +138,89 @@ export async function fetchCloudHistory() {
   return response.json();
 }
 
+/**
+ * Add a new station manually (Admin)
+ */
+export async function addStation(stationData) {
+  const url = `${API_BASE_URL}/api/stations`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(stationData),
+  });
+
+  return response.json();
+}
+/**
+ * Fetch all stations from the database
+ */
+export async function fetchAllStations() {
+  const url = `${API_BASE_URL}/api/stations`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch stations');
+  }
+
+  const data = await response.json();
+  return data.stations || [];
+}
+
+/**
+ * Update an existing station
+ */
+export async function updateStation(id, stationData) {
+  const url = `${API_BASE_URL}/api/stations/${id}`;
+
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(stationData),
+  });
+
+  return response.json();
+}
+
+/**
+ * Delete a station
+ */
+export async function deleteStation(id) {
+  const url = `${API_BASE_URL}/api/stations/${id}`;
+
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  return response.json();
+}
+
+/**
+ * Verify admin passcode with the backend
+ */
+export async function verifyAdminPasscode(passcode) {
+  const url = `${API_BASE_URL}/api/stations/verify-admin`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ passcode }),
+  });
+
+  return response.json();
+}
