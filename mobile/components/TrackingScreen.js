@@ -157,8 +157,12 @@ export default function TrackingScreen() {
         const stored = await AsyncStorage.getItem('trip_history');
         if (stored) {
           const parsed = JSON.parse(stored);
-          // Deduplicate by ID just in case old data has collisions
-          const unique = parsed.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
+          // DEEP SCRUB: Deduplicate by ID and ensure every trip has an ID
+          const unique = parsed.reduce((acc, current) => {
+            const x = acc.find(item => item.id === current.id);
+            if (!x) return acc.concat([current]);
+            return acc;
+          }, []);
           setTripHistory(unique);
         }
       } catch (err) {}
@@ -1457,8 +1461,8 @@ export default function TrackingScreen() {
               {tripHistory.length === 0 ? (
                 <Text style={styles.emptyText}>No recent trips detected yet.</Text>
               ) : (
-                tripHistory.map((trip) => (
-                  <View key={trip.id} style={styles.historyItem}>
+                tripHistory.map((trip, i) => (
+                  <View key={`trip-${trip.id}-${i}`} style={styles.historyItem}>
                     <View style={styles.historyIcon}>
                       <Ionicons name="train-outline" size={20} color="#10b981" />
                     </View>
