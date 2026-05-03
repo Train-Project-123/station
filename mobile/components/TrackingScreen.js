@@ -554,8 +554,10 @@ export default function TrackingScreen() {
           setLiveBoardLoading(true);
           fetchStationLiveBoard(nearest.stationCode)
             .then((data) => {
-              setLiveBoard(data);
-              showToast(`${data.totalTrains} train(s) at ${nearest.stationCode} in next 2h`, 'info');
+              const boardData = data.data || data;
+              setLiveBoard(boardData);
+              const count = boardData.totalTrains ?? (boardData.trains ? boardData.trains.length : 0);
+              showToast(`${count} train(s) at ${nearest.stationCode} in next 2h`, 'info');
             })
             .catch((err) => {
               console.warn('[LIVE BOARD]', err.message);
@@ -1466,7 +1468,7 @@ export default function TrackingScreen() {
                   <Text style={styles.emptyText}>No trains in next 2 hours.</Text>
                 )}
 
-                {liveBoard && !liveBoardLoading && liveBoard.trains.slice(0, 3).map((train, idx) => (
+                {liveBoard && !liveBoardLoading && liveBoard.trains?.slice(0, 3).map((train, idx) => (
                   <View key={`live-train-${train.trainNumber}-${idx}`} style={styles.trainRowMinimal}>
                     <View style={styles.trainRowLeft}>
                       <Text style={styles.trainNumText}>{train.trainNumber}</Text>
@@ -1480,7 +1482,7 @@ export default function TrackingScreen() {
                     </View>
                   </View>
                 ))}
-                {liveBoard && liveBoard.trains.length > 3 && (
+                {liveBoard && liveBoard.trains?.length > 3 && (
                   <Text style={styles.moreText}>+{liveBoard.trains.length - 3} more trains</Text>
                 )}
               </View>
