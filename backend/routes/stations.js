@@ -36,6 +36,54 @@ const STATION_METADATA = {
     state: "Kerala",
     latitude: 11.2486,
     longitude: 75.7844
+  },
+  "AWY": {
+    name: "ALUVA",
+    zone: "SR",
+    division: "TVC",
+    state: "Kerala",
+    latitude: 10.1076,
+    longitude: 76.3533
+  },
+  "ERS": {
+    name: "ERNAKULAM JN",
+    zone: "SR",
+    division: "TVC",
+    state: "Kerala",
+    latitude: 9.9659,
+    longitude: 76.2905
+  },
+  "ERN": {
+    name: "ERNAKULAM TOWN",
+    zone: "SR",
+    division: "TVC",
+    state: "Kerala",
+    latitude: 9.9918,
+    longitude: 76.2882
+  },
+  "TCR": {
+    name: "THRISSUR",
+    zone: "SR",
+    division: "TVC",
+    state: "Kerala",
+    latitude: 10.5186,
+    longitude: 76.2101
+  },
+  "SRR": {
+    name: "SHORANUR JN",
+    zone: "SR",
+    division: "PGT",
+    state: "Kerala",
+    latitude: 10.7602,
+    longitude: 76.2736
+  },
+  "TVC": {
+    name: "THIRUVANANTHAPURAM",
+    zone: "SR",
+    division: "TVC",
+    state: "Kerala",
+    latitude: 8.4870,
+    longitude: 76.9515
   }
 };
 
