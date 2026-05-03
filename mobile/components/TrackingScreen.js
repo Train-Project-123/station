@@ -822,6 +822,7 @@ export default function TrackingScreen() {
       visible={isAuthModalOpen}
       transparent
       animationType="fade"
+      statusBarTranslucent
       onRequestClose={() => setIsAuthModalOpen(false)}
     >
       <KeyboardAvoidingView 
@@ -874,6 +875,15 @@ export default function TrackingScreen() {
                 }
               }}
             />
+          </View>
+
+          {/* Fixed-height container to prevent UI jerking */}
+          <View style={{ height: 20, justifyContent: 'center', marginTop: 10 }}>
+            {authError && (
+              <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
+                Passcode incorrect
+              </Text>
+            )}
           </View>
 
           <TouchableOpacity 
@@ -934,6 +944,7 @@ export default function TrackingScreen() {
       <Modal
         visible={isDrawerOpen}
         animationType="slide"
+        statusBarTranslucent
         onRequestClose={() => {
           setConfirmModal({
             visible: true,
@@ -946,7 +957,7 @@ export default function TrackingScreen() {
       >
         <View style={[styles.drawerContent, { width: '100%' }]}>
           <SafeAreaView style={{ flex: 1, backgroundColor: '#09090b' }}>
-            <View style={styles.drawerHeader}>
+            <View style={[styles.drawerHeader, { paddingTop: Platform.OS === 'android' ? 20 : 0 }]}>
               <View>
                 <Text style={styles.drawerTitle}>ADMIN PANEL</Text>
                 <Text style={{ color: '#71717a', fontSize: 12 }}>Manage Stations & Metadata</Text>
