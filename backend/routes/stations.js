@@ -120,11 +120,15 @@ router.get('/nearby', async (req, res) => {
 router.get('/:code/live', async (req, res) => {
   const stationCode = req.params.code.toUpperCase();
   const RAIL_RADAR_API = 'https://api.railradar.org';
-  const apiKey = process.env.TRAIN_API;  try {
-    const url = `${RAIL_RADAR_API}/api/v1/stations/${stationCode}/live?hours=2`;
-    console.log(`[LIVE BOARD] 🚉 Fetching real-time data for ${stationCode}`);
+  const apiKey = process.env.TRAIN_API;
+  try {
+    const INFO_URL = `${RAIL_RADAR_API}/api/v1/stations/${stationCode}/info`;
+    const LIVE_URL = `${RAIL_RADAR_API}/api/v1/stations/${stationCode}/live?hours=2`;
+    
+    console.log(`[STATION FETCH] 🛰️ Fetching official info for ${stationCode}`);
 
-    const response = await fetch(url, {
+    // Step 1: Fetch official station info (Coordinates, Zone, etc.)
+    const infoResponse = await fetch(`${INFO_URL}?apiKey=${apiKey}`, {
       headers: {
         'X-API-Key': apiKey,
         'Content-Type': 'application/json',
@@ -132,66 +136,49 @@ router.get('/:code/live', async (req, res) => {
       },
     });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      return res.status(response.status).json({
+    let stationInfo = {};
+    if (infoResponse.ok) {
+      const infoJson = await infoResponse.json();
+      stationInfo = infoJson.data || {};
+      console.log(`[STATION FETCH] ✅ Official Info Found for ${stationCode}`);
+    }
+
+    // Step 2: Fetch live board for trains (Maintain existing functionality)
+    const liveResponse = await fetch(LIVE_URL, {
+      headers: {
+        'X-API-Key': apiKey,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+    });
+
+    if (!liveResponse.ok && !infoResponse.ok) {
+      return res.status(404).json({
         success: false,
-        message: `RailRadar API returned ${response.status}.`,
+        message: `Station ${stationCode} not found.`,
       });
     }
 
-    const json = await response.json();
-    const board = json.data ?? json;
+    const liveJson = await liveResponse.json();
+    const board = liveJson.data ?? liveJson;
     
-    // X-RAY LOG: See exactly what the API is sending
-    console.log(`[LIVE BOARD] 🕵️‍♂️ Raw data for ${stationCode}:`, JSON.stringify(board, null, 2));
-
-    const station = board.station || {};
-    const stationName = station.name || board.stationName || "";
-
-    let coordinates = null;
-
-    // REAL-TIME LOOKUP: Multi-step search for best coordinates
-    if (stationName) {
-      try {
-        const searchQueries = [
-          `${stationName} Railway Station, India`,
-          `${stationName} Railway Station`,
-          `${stationName} Station`
-        ];
-
-        for (const query of searchQueries) {
-          console.log(`[GEO LOOKUP] 🌍 Trying: ${query}`);
-          const osmUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&limit=1`;
-          const osmRes = await fetch(osmUrl, {
-            headers: { 'User-Agent': 'Thirakkundo-App-Backend-v3' }
-          });
-          const osmData = await osmRes.json();
-          
-          if (osmData && osmData.length > 0) {
-            coordinates = {
-              lat: parseFloat(osmData[0].lat),
-              lng: parseFloat(osmData[0].lon)
-            };
-            console.log(`[GEO LOOKUP] ✅ Found: ${coordinates.lat}, ${coordinates.lng}`);
-            break; 
-          }
-        }
-      } catch (geoErr) {
-        console.warn(`[GEO LOOKUP] ❌ Failed to find coordinates:`, geoErr.message);
-      }
-    }
+    // Extract state from address (e.g. "Kerala" from "Tel: 0484- 2376131, Kerala")
+    const address = stationInfo.address || "";
+    const state = stationInfo.state || (address.includes(',') ? address.split(',').pop().trim() : null);
 
     return res.json({
       success: true,
       data: {
         station: {
           code: stationCode,
-          name: stationName,
-          zone: station.zone || station.zoneCode || null,
-          division: station.division || station.divisionCode || null,
-          state: station.state || (board.trains && board.trains[0]?.train?.source?.state) || null,
-          coordinates: coordinates
+          name: stationInfo.name || board.station?.name || "",
+          zone: stationInfo.zone || board.station?.zone || null,
+          division: stationInfo.division || board.station?.division || null,
+          state: state || board.station?.state || null,
+          coordinates: stationInfo.lat ? {
+            lat: parseFloat(stationInfo.lat),
+            lng: parseFloat(stationInfo.lng)
+          } : null
         },
         queryingForNextHours: board.queryingForNextHours || 2,
         totalTrains: (board.trains || []).length,
@@ -229,7 +216,7 @@ router.get('/:code/live', async (req, res) => {
         timestamp: new Date().toISOString(),
         service: 'TrainAPI_V1',
         method: 'getLiveStationBoard',
-        _source: 'live_api_with_deep_lookup'
+        _source: 'official_railradar_api'
       }
     });
   } catch (err) {
