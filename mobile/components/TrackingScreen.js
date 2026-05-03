@@ -1186,6 +1186,8 @@ export default function TrackingScreen() {
                             res = await addStation(data);
                           }
 
+                          console.log('[ADMIN] Server Response:', res);
+
                           if(res.success) {
                             showToast(isEditMode ? 'Station updated!' : 'Station added!', 'success');
                             setAdminForm({ name: '', code: '', zone: '', state: '', lat: '', lng: '' });
@@ -1197,7 +1199,7 @@ export default function TrackingScreen() {
                             showToast(res.message || 'Operation failed', 'error');
                           }
                         } catch(e) {
-                          console.error('[ADMIN] Save Error:', e.message);
+                          console.error('[ADMIN] Save Error Detail:', e);
                           showToast('Network error', 'error');
                         } finally {
                           setAdminLoading(false);
