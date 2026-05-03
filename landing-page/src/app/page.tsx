@@ -21,7 +21,7 @@ export default function LandingPage() {
           clearInterval(interval);
           setDownloading(false);
           const link = document.createElement('a');
-          link.href = 'https://expo.dev/artifacts/eas/xjGPg4o4jbTUVFMYFY6nxP.apk';
+          link.href = 'https://github.com/Train-Project-123/station/releases/download/v1.4/application-fda7d6df-7007-462d-b6f2-33327f960c51.apk';
           link.setAttribute('download', 'Thirakkundo.apk');
           document.body.appendChild(link);
           link.click();
