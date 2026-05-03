@@ -183,22 +183,23 @@ router.get('/:code/live', async (req, res) => {
         queryingForNextHours: board.queryingForNextHours || 2,
         totalTrains: (board.trains || []).length,
         trains: (board.trains || []).map((entry) => ({
-          train: {
-            number: entry.train?.number || null,
-            name: entry.train?.name || null,
-            type: entry.train?.type || null,
-            sourceStationCode: entry.train?.sourceStationCode || entry.train?.source?.code || null,
-            destinationStationCode: entry.train?.destinationStationCode || entry.train?.destination?.code || null,
-          },
+          trainNumber: entry.train?.number || null,
+          trainName: entry.train?.name || null,
+          trainType: entry.train?.type || null,
+          fromCode: entry.train?.sourceStationCode || entry.train?.source?.code || null,
+          toCode: entry.train?.destinationStationCode || entry.train?.destination?.code || null,
           platform: entry.platform || null,
-          journeyDate: entry.journeyDate || null,
-          schedule: {
+          scheduled: {
             arrival: entry.schedule?.arrival || null,
             departure: entry.schedule?.departure || null,
           },
-          live: {
-            arrivalDelayDisplay: entry.live?.arrivalDelayDisplay || entry.live?.expectedArrival || null,
-            departureDelayDisplay: entry.live?.departureDelayDisplay || entry.live?.expectedDeparture || null,
+          expected: {
+            arrival: entry.live?.expectedArrival || entry.live?.arrivalDelayDisplay || null,
+            departure: entry.live?.expectedDeparture || entry.live?.departureDelayDisplay || null,
+          },
+          delay: {
+            arrival: entry.live?.arrivalDelayDisplay || '0 min',
+            departure: entry.live?.departureDelayDisplay || '0 min',
           },
           status: {
             isCancelled: entry.status?.isCancelled || false,
@@ -207,8 +208,6 @@ router.get('/:code/live', async (req, res) => {
             isDepartureCancelled: entry.status?.isDepartureCancelled || false,
             hasArrived: entry.status?.hasArrived || false,
             hasDeparted: entry.status?.hasDeparted || false,
-            isDestinationChanged: entry.status?.isDestinationChanged || false,
-            isSourceChanged: entry.status?.isSourceChanged || false,
           }
         })),
       },
