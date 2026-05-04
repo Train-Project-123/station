@@ -19,7 +19,7 @@ export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
   const showToast = useCallback((message, type = 'default', duration = 3000) => {
-    const id = Date.now().toString();
+    const id = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     setToasts((prev) => [...prev, { id, message, type, duration }]);
   }, []);
 

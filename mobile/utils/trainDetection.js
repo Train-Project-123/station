@@ -3,7 +3,7 @@
  * Implements the algorithm for auto-detecting which train the user has boarded.
  */
 
-const RAIL_RADAR_API_KEY = process.env.EXPO_PUBLIC_TRAIN_API;
+const RAIL_RADAR_API_KEY = 'rr_as97u1l1wby7ueobdx3uc5cieea9b3sp';
 const RAIL_RADAR_BASE_URL = 'https://api.railradar.org/api/v1';
 
 /**
@@ -13,12 +13,12 @@ const RAIL_RADAR_BASE_URL = 'https://api.railradar.org/api/v1';
  */
 export async function getActualDeparture(trainNumber, stationCode) {
   const today = new Date().toISOString().split('T')[0];
-  const url = `${RAIL_RADAR_BASE_URL}/trains/${trainNumber}?dataType=live&journeyDate=${today}`;
+  const url = `${RAIL_RADAR_BASE_URL}/trains/${trainNumber}?apiKey=${RAIL_RADAR_API_KEY}&dataType=live&journeyDate=${today}`;
 
   try {
     const response = await fetch(url, {
+      method: 'GET',
       headers: {
-        'X-API-Key': RAIL_RADAR_API_KEY,
         'Accept': 'application/json',
       },
     });
@@ -38,8 +38,12 @@ export async function getActualDeparture(trainNumber, stationCode) {
     );
     
     if (stop && stop.actualDeparture) {
-     
-      return stop.actualDeparture;
+      // Normalize to seconds if it's in milliseconds (13 digits vs 10)
+      let departure = stop.actualDeparture;
+      if (departure > 10000000000) { // Likely milliseconds
+        departure = Math.floor(departure / 1000);
+      }
+      return departure;
     }
     
     return null;

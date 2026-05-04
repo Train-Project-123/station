@@ -14,6 +14,7 @@ import {
   TextInput,
   Modal,
   KeyboardAvoidingView,
+  ActivityIndicator,
 } from 'react-native';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,7 +24,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BACKGROUND_LOCATION_TASK } from '../utils/backgroundTask';
 
 import { haversineDistance, formatDistance, isWithinBoundary } from '../utils/haversine';
-import { fetchNearbyStations, fetchStationLiveBoard, addStation, fetchAllStations, verifyAdminPasscode, updateStation, deleteStation } from '../utils/api';
+import { fetchNearbyStations, fetchStationLiveBoard, addStation, fetchAllStations, verifyAdminPasscode, updateStation, deleteStation, fetchTrainDetails } from '../utils/api';
 import { performMatch } from '../utils/trainDetection';
 import { getRoadDistance } from '../utils/ors';
 import { useToast } from './Toast';
@@ -60,13 +61,79 @@ const TRACKING_STATUS = {
   ERROR: 'error',
 };
 
+// ─── Utilities ───────────────────────────────────────────────────────────────
+const getTrainState = (train) => {
+  if (!train) return 'upcoming';
+
+  const now = new Date();
+  const currentTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  const depTime = train.expected?.departure || train.scheduled?.departure;
+  const arrTime = train.expected?.arrival || train.scheduled?.arrival;
+
+  if (train.detailedStatus) {
+    if (train.detailedStatus.hasDeparted) return 'departed';
+    if (train.detailedStatus.hasArrived) return 'at_station';
+    return 'upcoming';
+  }
+
+  if (typeof train.status === 'string') {
+    const s = train.status.toUpperCase();
+    if (s.includes('DEPARTED') || s.includes('GONE')) return 'departed';
+    if (s.includes('AT_STATION') || s.includes('ARRIVED')) return 'at_station';
+    if (s.includes('UPCOMING') || s.includes('RUNNING')) return 'upcoming';
+  }
+
+  if (train.status?.hasDeparted) return 'departed';
+  if (train.status?.hasArrived) return 'at_station';
+
+  if (depTime && depTime !== 'On Time' && depTime < currentTimeStr) return 'departed';
+  if (arrTime && arrTime !== 'On Time' && arrTime <= currentTimeStr) return 'at_station';
+
+  return 'upcoming';
+};
+
+const addDelayToTime = (timeStr, delayStr) => {
+  if (!timeStr || timeStr === '--:--') return '--:--';
+  if (!delayStr || delayStr === 'On Time' || delayStr === '00:00' || delayStr === '0 min') return timeStr;
+
+  try {
+    const [h, m] = timeStr.split(':').map(Number);
+    let dh = 0, dm = 0;
+    if (delayStr.includes(':')) {
+      [dh, dm] = delayStr.split(':').map(Number);
+    } else {
+      dm = parseInt(delayStr) || 0;
+    }
+    const date = new Date();
+    date.setHours(h + dh);
+    date.setMinutes(m + dm);
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  } catch (e) {
+    return timeStr;
+  }
+};
+
+const formatTime = (ts) => {
+  if (!ts || typeof ts !== 'number') return ts || '—';
+  try {
+    const date = new Date(ts * 1000);
+    return date.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'Asia/Kolkata'
+    });
+  } catch (e) {
+    return '—';
+  }
+};
+
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function TrackingScreen() {
   const { showToast } = useToast();
 
 
-
-  // ── Permission Gate State ─────────────────────────────────────────────────
 
   // ── Permission Gate State ─────────────────────────────────────────────────
   const [permissionStatus, setPermissionStatus] = useState(PERMISSION_STATUS.CHECKING);
@@ -76,35 +143,35 @@ export default function TrackingScreen() {
   const [isTracking, setIsTracking] = useState(false);
   const [userLocation, setUserLocation] = useState(null);
   const [nearestStation, setNearestStation] = useState(null);
-  const [distanceMeters, setDistanceMeters] = useState(null); // Straight-line distance
-  const [roadDistance, setRoadDistance] = useState(null);     // ORS road distance
-  const [roadDuration, setRoadDuration] = useState(null);     // ORS road duration
+  const [distanceMeters, setDistanceMeters] = useState(null); 
+  const [roadDistance, setRoadDistance] = useState(null);    
+  const [roadDuration, setRoadDuration] = useState(null);   
   const [lastChecked, setLastChecked] = useState(null);
   const [intervalMode, setIntervalMode] = useState(null);
   const [locationError, setLocationError] = useState(null);
 
-  // ── Live Board State ──────────────────────────────────────────────────────
-  const [liveBoard, setLiveBoard] = useState(null);        // { totalTrains, trains[] }
+
+  const [liveBoard, setLiveBoard] = useState(null);      
   const [liveBoardLoading, setLiveBoardLoading] = useState(false);
   const [liveBoardError, setLiveBoardError] = useState(null);
   const [matchedTrainData, setMatchedTrainData] = useState(null);
-  
-  const [activeTab, setActiveTab] = useState('track'); // 'track', 'speed', 'history', 'settings'
+
+  const [activeTab, setActiveTab] = useState('track'); 
   const [liveSpeed, setLiveSpeed] = useState(0);
   const [tripHistory, setTripHistory] = useState([]);
-  
-  // ── Drawer & Admin State ──
+
+
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState('add'); // 'add', 'list'
+  const [drawerTab, setDrawerTab] = useState('add'); 
   const [allStations, setAllStations] = useState([]);
   const [allStationsLoading, setAllStationsLoading] = useState(false);
 
-  // ── Auth & Security State ──
+
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [passcodeInput, setPasscodeInput] = useState('');
   const [authError, setAuthError] = useState(false);
 
-  // ── Admin Form State ──
+
   const [adminForm, setAdminForm] = useState({
     name: '',
     code: '',
@@ -135,6 +202,56 @@ export default function TrackingScreen() {
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [viewingStation, setViewingStation] = useState(null);
 
+  const [isTrainModalOpen, setIsTrainModalOpen] = useState(false);
+  const [viewingTrain, setViewingTrain] = useState(null);
+
+  const [stationModalBoard, setStationModalBoard] = useState(null);
+  const [stationModalLoading, setStationModalLoading] = useState(false);
+  const [knownTrains, setKnownTrains] = useState(new Set());
+  const lastFetchedStationRef = useRef(null);
+  const [trainDetailData, setTrainDetailData] = useState(null);
+  const [trainDetailLoading, setTrainDetailLoading] = useState(false);
+  const [trainSearchQuery, setTrainSearchQuery] = useState('');
+  const lastSpeedPosRef = useRef(null);
+
+  const focusedRoute = useMemo(() => {
+    const rawData = trainDetailData?.data || trainDetailData;
+    const liveData = rawData?.liveData || rawData;
+    const fullRoute = liveData?.route || rawData?.route || [];
+    if (!fullRoute.length) return { route: [], fullRoute: [] };
+
+    // --- Dynamic Focus Logic ---
+    let focusIndex = fullRoute.findIndex(stop =>
+      (stop.hasArrived || !!stop.actualArrival) &&
+      !(stop.hasDeparted || !!stop.actualDeparture)
+    );
+
+    if (focusIndex === -1) {
+      focusIndex = fullRoute.findIndex(stop =>
+        !(stop.hasArrived || !!stop.actualArrival) &&
+        !(stop.hasDeparted || !!stop.actualDeparture)
+      );
+    }
+
+    if (focusIndex === -1) focusIndex = 0;
+
+    const startIndex = Math.max(0, focusIndex - 2);
+    const endIndex = Math.min(fullRoute.length - 1, focusIndex + 2);
+    return {
+      route: fullRoute.slice(startIndex, endIndex + 1),
+      fullRoute
+    };
+  }, [trainDetailData]);
+
+  const filteredTrains = useMemo(() => {
+    if (!stationModalBoard?.trains) return [];
+    return stationModalBoard.trains.filter(t => 
+      !trainSearchQuery || 
+      t.trainNumber?.includes(trainSearchQuery) || 
+      t.toCode?.toLowerCase().includes(trainSearchQuery.toLowerCase())
+    );
+  }, [stationModalBoard, trainSearchQuery]);
+
   const loadAllStations = async () => {
     setAllStationsLoading(true);
     try {
@@ -146,6 +263,107 @@ export default function TrackingScreen() {
       setAllStationsLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (isTrainModalOpen && viewingTrain) {
+      // If we already have the full route data from the station board refresh, use it instantly!
+      if (viewingTrain.fullDetail) {
+        setTrainDetailData(viewingTrain.fullDetail);
+        setTrainDetailLoading(false);
+      } else {
+        setTrainDetailLoading(true);
+        setTrainDetailData(null);
+        fetchTrainDetails(viewingTrain.trainNumber)
+          .then(data => setTrainDetailData(data.data || data))
+          .catch(() => setTrainDetailData(null))
+          .finally(() => setTrainDetailLoading(false));
+      }
+    }
+  }, [isTrainModalOpen, viewingTrain]);
+
+  useEffect(() => {
+    if (isViewModalOpen && viewingStation) {
+      refreshStationData(viewingStation.stationCode, false);
+    }
+  }, [isViewModalOpen, viewingStation]);
+
+  const refreshStationData = useCallback(async (stationCode, isMain = false) => {
+    if (!stationCode || stationModalLoading || liveBoardLoading) return;
+
+    // Clear cache if switching stations
+    if (lastFetchedStationRef.current !== stationCode) {
+      setKnownTrains(new Set());
+      lastFetchedStationRef.current = stationCode;
+    }
+
+    if (isMain) setLiveBoardLoading(true);
+    else setStationModalLoading(true);
+
+    try {
+      // Step 1: Live Board (hours=3)
+      const boardRes = await fetchStationLiveBoard(stationCode, 3);
+      const basicTrains = boardRes.data?.trains || [];
+
+      // Update persistent known set
+      setKnownTrains(prev => {
+        const next = new Set(prev);
+        basicTrains.forEach(t => next.add(t.trainNumber));
+        return next;
+      });
+
+      // Step 2: Parallel Details Fetch (Background)
+      const mergedNumbers = Array.from(new Set([
+        ...Array.from(knownTrains),
+        ...basicTrains.map(t => t.trainNumber)
+      ])).slice(0, 15); // Senior Tip: Cap parallel calls to prevent rate limiting
+
+      const detailed = await Promise.all(
+        mergedNumbers.map(async (num) => {
+          try {
+            // Check cache/fullDetail first
+            const existing = basicTrains.find(t => t.trainNumber === num);
+            if (existing?.fullDetail) return existing;
+
+            const detailRes = await fetchTrainDetails(num);
+            const data = detailRes.data || detailRes;
+            
+            const stop = data.liveData?.route?.find(s =>
+              s.stationCode?.toUpperCase().trim() === stationCode.toUpperCase().trim()
+            );
+
+            return {
+              ...(existing || { trainNumber: num }),
+              platform: stop?.platform || existing?.platform,
+              detailedStatus: {
+                hasArrived: !!stop?.actualArrival,
+                hasDeparted: !!stop?.actualDeparture
+              },
+              actualTime: {
+                arrival: stop?.actualArrival,
+                departure: stop?.actualDeparture
+              },
+              fullDetail: data
+            };
+          } catch (e) {
+            return basicTrains.find(t => t.trainNumber === num);
+          }
+        })
+      );
+
+      const finalData = {
+        ...boardRes.data,
+        trains: detailed.filter(Boolean)
+      };
+
+      if (isMain) setLiveBoard(finalData);
+      else setStationModalBoard(finalData);
+    } catch (err) {
+      showToast('Refresh failed', 'error');
+    } finally {
+      setLiveBoardLoading(false);
+      setStationModalLoading(false);
+    }
+  }, [stationModalLoading, liveBoardLoading, knownTrains]);
 
   useEffect(() => {
     if (isDrawerOpen && drawerTab === 'list') {
@@ -168,7 +386,7 @@ export default function TrackingScreen() {
           }, []);
           setTripHistory(unique);
         }
-      } catch (err) {}
+      } catch (err) { }
     };
     loadHistory();
   }, []);
@@ -182,11 +400,11 @@ export default function TrackingScreen() {
 
       const stored = await AsyncStorage.getItem('trip_history');
       const currentHistory = stored ? JSON.parse(stored) : [];
-      
+
       // Filter out any existing trips with the same ID (deduplication)
       const filteredHistory = currentHistory.filter(t => t.id !== uniqueId);
       const newHistory = [tripWithId, ...filteredHistory.slice(0, 19)]; // Keep last 20
-      
+
       setTripHistory(newHistory);
       await AsyncStorage.setItem('trip_history', JSON.stringify(newHistory));
     } catch (err) {
@@ -202,16 +420,38 @@ export default function TrackingScreen() {
         const { status } = await Location.getForegroundPermissionsAsync();
         if (status === 'granted') {
           subscription = await Location.watchPositionAsync(
-            { 
-              accuracy: Location.Accuracy.BestForNavigation, 
+            {
+              accuracy: Location.Accuracy.BestForNavigation,
               distanceInterval: 0,
-              timeInterval: 500 
+              timeInterval: 500
             },
             (location) => {
-              if (location.coords.speed !== null && location.coords.speed >= 0) {
-                // Convert m/s to km/h
-                setLiveSpeed(location.coords.speed * 3.6);
+              const { coords, timestamp } = location;
+              let currentKmph = (coords.speed || 0) * 3.6;
+
+              // Fallback Calculation: If GPS reports 0 but we might be moving
+              if (currentKmph < 5 && lastSpeedPosRef.current) {
+                const dist = haversineDistance(
+                  lastSpeedPosRef.current.lat,
+                  lastSpeedPosRef.current.lng,
+                  coords.latitude,
+                  coords.longitude
+                ); // km
+                const timeDiff = (timestamp - lastSpeedPosRef.current.ts) / 1000 / 3600; // hours
+
+                if (timeDiff > 0 && timeDiff < 0.01) { // Skip if too much time passed
+                  const calcSpeed = dist / timeDiff;
+                  // If calculated speed is significantly higher, use it
+                  if (calcSpeed > currentKmph && calcSpeed < 200) {
+                    currentKmph = calcSpeed;
+                  }
+                }
               }
+
+              lastSpeedPosRef.current = { lat: coords.latitude, lng: coords.longitude, ts: timestamp };
+
+              // Smoothing: Simple low-pass filter to prevent erratic jumps
+              setLiveSpeed(prev => (prev * 0.3) + (currentKmph * 0.7));
             }
           );
         }
@@ -229,14 +469,14 @@ export default function TrackingScreen() {
     if (Platform.OS === 'web') return; // Accelerometer not supported on web
 
     let subscription = null;
-    
+
     // Check accelerometer every 100ms
     Accelerometer.setUpdateInterval(100);
 
     subscription = Accelerometer.addListener(({ x, y, z }) => {
       // Calculate magnitude of acceleration vector (1g is resting gravity)
       const force = Math.sqrt(x * x + y * y + z * z);
-      
+
       // If force exceeds 2.0g, it's a solid shake
       if (force > 2.0 && activeTab !== 'speed') {
         setActiveTab('speed');
@@ -263,16 +503,16 @@ export default function TrackingScreen() {
 
   const startSpeedMonitor = () => {
     if (speedMonitorIntervalRef.current) clearInterval(speedMonitorIntervalRef.current);
-    
+
     speedMonitorIntervalRef.current = setInterval(async () => {
       try {
         const { coords } = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         const currentSpeedKmph = (coords.speed || 0) * 3.6;
-        
+
         setSpeedHistory(prev => {
           const next = [...prev, currentSpeedKmph].slice(-5);
           const avg = next.length > 0 ? next.reduce((a, b) => a + b, 0) / next.length : 0;
-          
+
           if (avg > 20) {
             setTriggerTicks(t => {
               const nextT = t + 1;
@@ -321,7 +561,7 @@ export default function TrackingScreen() {
 
     try {
       const result = await performMatch(T_trigger, nearestStation.stationCode, liveBoard.trains);
-      
+
       if (result.status === 'SUCCESS') {
         const matched = {
           train: result.train,
@@ -329,14 +569,14 @@ export default function TrackingScreen() {
           confidence: result.confidence,
           timestamp: new Date().toISOString()
         };
-        
+
         setMatchedTrainData(matched);
         await AsyncStorage.setItem('matched_train_result', JSON.stringify(matched));
         showToast(`Match Found: ${result.train.trainName} (${result.confidence})`, 'success');
       } else if (result.status === 'FALSE_TRIGGER' || result.status === 'NO_CANDIDATES' || result.status === 'LOW_CONFIDENCE') {
-        const msg = result.status === 'FALSE_TRIGGER' ? 'False trigger detected. Resuming...' : 
-                    result.status === 'LOW_CONFIDENCE' ? 'Low confidence match. Discarding...' :
-                    'No matching train found. Resuming...';
+        const msg = result.status === 'FALSE_TRIGGER' ? 'False trigger detected. Resuming...' :
+          result.status === 'LOW_CONFIDENCE' ? 'Low confidence match. Discarding...' :
+            'No matching train found. Resuming...';
         showToast(msg, 'warning');
         if (currentStatusRef.current === TRACKING_STATUS.INSIDE) {
           setIsSpeedMonitorActive(true);
@@ -365,7 +605,7 @@ export default function TrackingScreen() {
       Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver }),
       Animated.spring(slideAnim, { toValue: 0, tension: 80, friction: 10, useNativeDriver }),
     ]).start();
-    
+
     // Poll for matched train from background task
     const pollInterval = setInterval(async () => {
       try {
@@ -373,7 +613,7 @@ export default function TrackingScreen() {
         if (dataStr) {
           const data = JSON.parse(dataStr);
           setMatchedTrainData(data);
-          
+
           // If this is a new match, add to history
           const lastId = await AsyncStorage.getItem('last_history_id');
           if (data.trainNumber !== lastId) {
@@ -388,99 +628,10 @@ export default function TrackingScreen() {
             await AsyncStorage.setItem('last_history_id', data.trainNumber);
           }
         }
-      } catch (err) {}
+      } catch (err) { }
     }, 5000);
     return () => clearInterval(pollInterval);
   }, [tripHistory]);
-
-  // ── STEP 1: Check existing permission on app open ─────────────────────────
-  useEffect(() => {
-    checkExistingPermission();
-  }, []);
-
-  const checkExistingPermission = async () => {
-    try {
-      const { status } = await Location.getForegroundPermissionsAsync();
-
-      if (status === 'granted') {
-       
-        setPermissionStatus(PERMISSION_STATUS.GRANTED);
-        beginTracking(); 
-      } else if (status === 'denied') {
-       
-        setPermissionStatus(PERMISSION_STATUS.BLOCKED);
-      } else {
-        setPermissionStatus(PERMISSION_STATUS.PROMPT);
-      }
-    } catch {
-      setPermissionStatus(PERMISSION_STATUS.PROMPT);
-    }
-  };
-
-  // ── STEP 2: Request permission when user taps "Allow Location" ────────────
-  const requestPermission = async () => {
-    try {
-      const { status, canAskAgain } = await Location.requestForegroundPermissionsAsync();
-
-      if (status === 'granted') {
-        // Also request background permission
-        await Location.requestBackgroundPermissionsAsync();
-        
-        setPermissionStatus(PERMISSION_STATUS.GRANTED);
-        showToast('Location access granted!', 'success');
-        beginTracking(); // auto-start tracking immediately
-      } else if (!canAskAgain) {
-        // Permanently denied — direct to Settings
-        setPermissionStatus(PERMISSION_STATUS.BLOCKED);
-        showToast('Location blocked. Please enable in Settings.', 'error');
-      } else {
-        setPermissionStatus(PERMISSION_STATUS.DENIED);
-        showToast('Location permission denied', 'warning');
-      }
-    } catch (err) {
-      showToast('Failed to request location permission', 'error');
-    }
-  };
-
-  // ── Open device Settings for blocked permission ───────────────────────────
-  const openSettings = () => {
-    Linking.openSettings();
-  };
-
-  // ── Retry from denied state ───────────────────────────────────────────────
-  const retryPermission = () => {
-    setPermissionStatus(PERMISSION_STATUS.PROMPT);
-  };
-
-  // ── Pulse animation while tracking ───────────────────────────────────────
-  useEffect(() => {
-    if (isTracking) {
-      const useNativeDriver = Platform.OS !== 'web';
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.3, duration: 700, useNativeDriver }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver }),
-        ])
-      ).start();
-    } else {
-      pulseAnim.setValue(1);
-    }
-  }, [isTracking]);
-
-  // ── Effect: Handle Tracking Interval based on ms state ──
-  useEffect(() => {
-    if (isTracking && intervalMs) {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = setInterval(() => {
-        checkLocation();
-      }, intervalMs);
-      return () => {
-        if (intervalRef.current) clearInterval(intervalRef.current);
-      };
-    } else {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    }
-  }, [isTracking, intervalMs, checkLocation]);
 
   // ── Core geofencing check ─────────────────────────────────────────────────
   const checkLocation = useCallback(async () => {
@@ -527,7 +678,7 @@ export default function TrackingScreen() {
       if (nearest) {
         const sLat = nearest.coordinates?.lat ?? nearest.location?.coordinates?.[1];
         const sLng = nearest.coordinates?.lng ?? nearest.location?.coordinates?.[0];
-        
+
         const roadData = await getRoadDistance(latitude, longitude, sLat, sLng);
         if (roadData) {
           setRoadDistance(roadData.distanceMeters);
@@ -547,23 +698,7 @@ export default function TrackingScreen() {
           showToast(`You are near ${nearest.stationName}`, 'success');
           setIntervalMode('30s');
           setIntervalMs(INTERVAL_INSIDE);
-
-          // ── Auto-fetch live board when user first enters station ──
-          setLiveBoard(null);
-          setLiveBoardError(null);
-          setLiveBoardLoading(true);
-          fetchStationLiveBoard(nearest.stationCode)
-            .then((data) => {
-              const boardData = data.data || data;
-              setLiveBoard(boardData);
-              const count = boardData.totalTrains ?? (boardData.trains ? boardData.trains.length : 0);
-              showToast(`${count} train(s) at ${nearest.stationCode} in next 2h`, 'info');
-            })
-            .catch((err) => {
-              console.warn('[LIVE BOARD]', err.message);
-              setLiveBoardError(err.message);
-            })
-            .finally(() => setLiveBoardLoading(false));
+          refreshStationData(nearest.stationCode, true);
         }
         setTrackingStatus(TRACKING_STATUS.INSIDE);
         currentStatusRef.current = TRACKING_STATUS.INSIDE;
@@ -577,29 +712,9 @@ export default function TrackingScreen() {
         currentStatusRef.current = TRACKING_STATUS.OUTSIDE;
       }
     } catch (err) {
-      console.error('[LOCATION ERROR]', err.message);
-      setLocationError(err.message);
-      showToast('Failed to get location', 'error');
-      setTrackingStatus(TRACKING_STATUS.ERROR);
-      currentStatusRef.current = TRACKING_STATUS.ERROR;
+      console.error('[LOCATION] Check failed:', err.message);
     }
-  }, [
-    showToast, 
-    setLastChecked, 
-    setUserLocation, 
-    setLocationError, 
-    setAllStations, 
-    setNearestStation, 
-    setDistanceMeters, 
-    setRoadDistance, 
-    setRoadDuration, 
-    setLiveBoard, 
-    setLiveBoardError, 
-    setLiveBoardLoading, 
-    setTrackingStatus, 
-    setIntervalMode,
-    setIntervalMs
-  ]);
+  }, [nearestStation, liveBoard, knownTrains, refreshStationData, showToast]);
 
   // ── Begin tracking (called after permission granted) ──────────────────────
   const beginTracking = useCallback(async () => {
@@ -608,49 +723,100 @@ export default function TrackingScreen() {
     setIsTracking(true);
     setLocationError(null);
     setIntervalMs(INTERVAL_INSIDE);
-    
-      try {
-        // Expo Go Android doesn't support background location
-        if (Platform.OS === 'android' && Constants?.appOwnership === 'expo') {
-          console.log('[LOCATION] Background tracking skipped (Expo Go limitation)');
-        } else {
-          await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-            accuracy: Location.Accuracy.Balanced,
-            distanceInterval: 50,
-            showsBackgroundLocationIndicator: true,
-          });
-        }
-      } catch (e) {
-        console.log('Background location start error:', e);
+
+    try {
+      // Expo Go Android doesn't support background location
+      if (Platform.OS === 'android' && Constants?.appOwnership === 'expo') {
+        console.log('[LOCATION] Background tracking skipped (Expo Go limitation)');
+      } else {
+        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+          accuracy: Location.Accuracy.Balanced,
+          distanceInterval: 50,
+          showsBackgroundLocationIndicator: true,
+        });
       }
-    
+    } catch (e) {
+      console.log('Background location start error:', e);
+    }
+
     await checkLocation();
     showToast('Location fetched successfully', 'info');
   }, [checkLocation, showToast, setIntervalMs]);
 
-  // ── Manual start (button press) ───────────────────────────────────────────
+  // ── STEP 1: Check existing location permission on mount ───────────────────
+  useEffect(() => {
+    checkExistingPermission();
+    loadAllStations(); // Load station directory on mount for name resolution
+  }, []);
+
+  const checkExistingPermission = async () => {
+    try {
+      const { status } = await Location.getForegroundPermissionsAsync();
+
+      if (status === 'granted') {
+        setPermissionStatus(PERMISSION_STATUS.GRANTED);
+        beginTracking();
+      } else if (status === 'denied') {
+        setPermissionStatus(PERMISSION_STATUS.BLOCKED);
+      } else {
+        setPermissionStatus(PERMISSION_STATUS.PROMPT);
+      }
+    } catch {
+      setPermissionStatus(PERMISSION_STATUS.PROMPT);
+    }
+  };
+
+  // ── STEP 2: Request permission when user taps "Allow Location" ────────────
+  const requestPermission = async () => {
+    try {
+      const { status, canAskAgain } = await Location.requestForegroundPermissionsAsync();
+
+      if (status === 'granted') {
+        // Also request background permission
+        await Location.requestBackgroundPermissionsAsync();
+
+        setPermissionStatus(PERMISSION_STATUS.GRANTED);
+        showToast('Location access granted!', 'success');
+        beginTracking(); // auto-start tracking immediately
+      } else if (!canAskAgain) {
+        // Permanently denied — direct to Settings
+        setPermissionStatus(PERMISSION_STATUS.BLOCKED);
+        showToast('Location blocked. Please enable in Settings.', 'error');
+      } else {
+        setPermissionStatus(PERMISSION_STATUS.DENIED);
+        showToast('Location permission denied', 'warning');
+      }
+    } catch (err) {
+      showToast('Failed to request location permission', 'error');
+    }
+  };
+
+  // ── Open device Settings for blocked permission ───────────────────────────
+  const openSettings = () => {
+    Linking.openSettings();
+  };
+
+  // ── Retry from denied state ───────────────────────────────────────────────
+  const retryPermission = () => {
+    setPermissionStatus(PERMISSION_STATUS.PROMPT);
+  };
+
   const startTracking = useCallback(async () => {
     await beginTracking();
   }, [beginTracking]);
 
-  // ── Stop tracking ─────────────────────────────────────────────────────────
-  const stopTracking = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
+  const stopTracking = useCallback(async () => {
     setIsTracking(false);
-    
-    Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).then((hasStarted) => {
-      if (hasStarted) Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-    });
-
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    try {
+      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    } catch (e) { }
     setTrackingStatus(TRACKING_STATUS.IDLE);
     currentStatusRef.current = TRACKING_STATUS.IDLE;
-    setIntervalMode(null);
-    setIntervalMs(null);
-    showToast('Tracking stopped', 'default');
-  }, [showToast, setIntervalMs]);
+    setLiveBoard(null);
+    setNearestStation(null);
+  }, []);
+
 
   const confirmBoarding = async () => {
     showToast('Boarding Confirmed!', 'success');
@@ -673,7 +839,7 @@ export default function TrackingScreen() {
     showToast('Match rejected. Recalculating...', 'info');
     setMatchedTrainData(null);
     await AsyncStorage.removeItem('matched_train_result');
-    
+
     // Resume speed monitor
     if (currentStatusRef.current === TRACKING_STATUS.INSIDE) {
       setIsSpeedMonitorActive(true);
@@ -745,8 +911,8 @@ export default function TrackingScreen() {
             {isBlocked
               ? 'Location Blocked'
               : isDenied
-              ? 'Permission Denied'
-              : 'Allow Location Access'}
+                ? 'Permission Denied'
+                : 'Allow Location Access'}
           </Text>
 
           {/* Description */}
@@ -754,8 +920,8 @@ export default function TrackingScreen() {
             {isBlocked
               ? 'You previously blocked location access. Please open your device Settings and enable location permission for this app.'
               : isDenied
-              ? 'Location access was denied. This app needs your GPS location to find nearby railway stations and track your proximity.'
-              : 'This app needs your GPS location to:\n\n• Find nearby railway stations\n• Calculate your distance to stations\n• Alert you when you enter or exit a station boundary'}
+                ? 'Location access was denied. This app needs your GPS location to find nearby railway stations and track your proximity.'
+                : 'This app needs your GPS location to:\n\n• Find nearby railway stations\n• Calculate your distance to stations\n• Alert you when you enter or exit a station boundary'}
           </Text>
 
           {/* Feature chips */}
@@ -844,14 +1010,14 @@ export default function TrackingScreen() {
       statusBarTranslucent
       onRequestClose={() => setIsAuthModalOpen(false)}
     >
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.authModalContainer}
       >
-        <TouchableOpacity 
-          style={styles.authModalBackdrop} 
-          activeOpacity={1} 
-          onPress={() => setIsAuthModalOpen(false)} 
+        <TouchableOpacity
+          style={styles.authModalBackdrop}
+          activeOpacity={1}
+          onPress={() => setIsAuthModalOpen(false)}
         />
         <View style={styles.authModalContent}>
           <View style={styles.authModalHeader}>
@@ -859,7 +1025,7 @@ export default function TrackingScreen() {
             <Text style={styles.authModalTitle}>ADMIN ACCESS</Text>
             <Text style={styles.authModalSub}>Enter 4-digit passcode</Text>
           </View>
-          
+
           <View style={styles.passcodeContainer}>
             <TextInput
               style={[styles.passcodeInput, authError && { borderColor: '#ef4444' }]}
@@ -905,7 +1071,7 @@ export default function TrackingScreen() {
             )}
           </View>
 
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.authCancelBtn}
             onPress={() => setIsAuthModalOpen(false)}
           >
@@ -921,32 +1087,32 @@ export default function TrackingScreen() {
       visible={confirmModal.visible}
       transparent
       animationType="fade"
-      onRequestClose={() => setConfirmModal(p => ({...p, visible: false}))}
+      onRequestClose={() => setConfirmModal(p => ({ ...p, visible: false }))}
     >
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmContent}>
           <View style={[styles.confirmIconContainer, { backgroundColor: confirmModal.type === 'danger' ? '#450a0a' : '#1e1b4b' }]}>
-            <Ionicons 
-              name={confirmModal.type === 'danger' ? "trash-outline" : "alert-circle-outline"} 
-              size={32} 
-              color={confirmModal.type === 'danger' ? "#ef4444" : "#6366f1"} 
+            <Ionicons
+              name={confirmModal.type === 'danger' ? "trash-outline" : "alert-circle-outline"}
+              size={32}
+              color={confirmModal.type === 'danger' ? "#ef4444" : "#6366f1"}
             />
           </View>
           <Text style={styles.confirmTitle}>{confirmModal.title}</Text>
           <Text style={styles.confirmMessage}>{confirmModal.message}</Text>
-          
+
           <View style={styles.confirmActionRow}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.confirmCancelBtn}
-              onPress={() => setConfirmModal(p => ({...p, visible: false}))}
+              onPress={() => setConfirmModal(p => ({ ...p, visible: false }))}
             >
               <Text style={styles.confirmCancelText}>Cancel</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.confirmBtn, { backgroundColor: confirmModal.type === 'danger' ? '#ef4444' : '#6366f1' }]}
               onPress={() => {
                 if (confirmModal.onConfirm) confirmModal.onConfirm();
-                setConfirmModal(p => ({...p, visible: false}));
+                setConfirmModal(p => ({ ...p, visible: false }));
               }}
             >
               <Text style={styles.confirmBtnText}>Confirm</Text>
@@ -981,7 +1147,7 @@ export default function TrackingScreen() {
                 <Text style={styles.drawerTitle}>ADMIN PANEL</Text>
                 <Text style={{ color: '#71717a', fontSize: 12 }}>Manage Stations & Metadata</Text>
               </View>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.exitAdminBtn}
                 onPress={() => {
                   setConfirmModal({
@@ -999,8 +1165,8 @@ export default function TrackingScreen() {
             </View>
 
             <View style={styles.drawerTabs}>
-              <TouchableOpacity 
-                style={[styles.drawerTab, (drawerTab === 'add' || isEditMode) && styles.drawerTabActive]} 
+              <TouchableOpacity
+                style={[styles.drawerTab, (drawerTab === 'add' || isEditMode) && styles.drawerTabActive]}
                 onPress={() => {
                   setIsEditMode(false);
                   setEditingStationId(null);
@@ -1012,8 +1178,8 @@ export default function TrackingScreen() {
                   {isEditMode ? 'Editing' : 'Add Station'}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.drawerTab, drawerTab === 'list' && !isEditMode && styles.drawerTabActive]} 
+              <TouchableOpacity
+                style={[styles.drawerTab, drawerTab === 'list' && !isEditMode && styles.drawerTabActive]}
                 onPress={() => {
                   setIsEditMode(false);
                   setDrawerTab('list');
@@ -1034,25 +1200,25 @@ export default function TrackingScreen() {
                         <Text style={styles.inputLabel}>Station Code</Text>
                         <View style={{ flexDirection: 'row', gap: 8 }}>
                           <View style={[styles.inputWrapper, { flex: 1 }]}>
-                            <TextInput 
+                            <TextInput
                               style={styles.nativeInput}
                               placeholder="e.g. CLT"
                               placeholderTextColor="#3f3f46"
-                              onChangeText={(val) => setAdminForm(p => ({...p, code: val.toUpperCase()}))}
+                              onChangeText={(val) => setAdminForm(p => ({ ...p, code: val.toUpperCase() }))}
                               value={adminForm.code}
                             />
                           </View>
-                          <TouchableOpacity 
+                          <TouchableOpacity
                             style={styles.fetchBtn}
                             onPress={async () => {
-                              if(!adminForm.code) return;
+                              if (!adminForm.code) return;
                               setAdminLoading(true);
                               try {
                                 const res = await fetchStationLiveBoard(adminForm.code);
-                                if(res && res.data && res.data.station) {
+                                if (res && res.data && res.data.station) {
                                   const s = res.data.station;
                                   setAdminForm(p => ({
-                                    ...p, 
+                                    ...p,
                                     name: s.name || p.name,
                                     zone: s.zone || p.zone,
                                     state: s.state || p.state,
@@ -1061,7 +1227,7 @@ export default function TrackingScreen() {
                                   }));
                                   showToast('Details fetched!', 'success');
                                 }
-                              } catch(e) {
+                              } catch (e) {
                                 showToast('Fetch failed', 'error');
                               } finally {
                                 setAdminLoading(false);
@@ -1077,11 +1243,11 @@ export default function TrackingScreen() {
                     <View style={styles.inputGroup}>
                       <Text style={styles.inputLabel}>Station Name</Text>
                       <View style={styles.inputWrapper}>
-                        <TextInput 
+                        <TextInput
                           style={styles.nativeInput}
                           placeholder="e.g. Kozhikode Main"
                           placeholderTextColor="#3f3f46"
-                          onChangeText={(val) => setAdminForm(p => ({...p, name: val}))}
+                          onChangeText={(val) => setAdminForm(p => ({ ...p, name: val }))}
                           value={adminForm.name}
                         />
                       </View>
@@ -1091,11 +1257,11 @@ export default function TrackingScreen() {
                       <View style={styles.inputGroup}>
                         <Text style={styles.inputLabel}>Station Code</Text>
                         <View style={styles.inputWrapper}>
-                          <TextInput 
+                          <TextInput
                             style={styles.nativeInput}
                             placeholder="e.g. CLT"
                             placeholderTextColor="#3f3f46"
-                            onChangeText={(val) => setAdminForm(p => ({...p, code: val.toUpperCase()}))}
+                            onChangeText={(val) => setAdminForm(p => ({ ...p, code: val.toUpperCase() }))}
                             value={adminForm.code}
                           />
                         </View>
@@ -1106,11 +1272,11 @@ export default function TrackingScreen() {
                       <View style={[styles.inputGroup, { flex: 1 }]}>
                         <Text style={styles.inputLabel}>Zone</Text>
                         <View style={styles.inputWrapper}>
-                          <TextInput 
+                          <TextInput
                             style={styles.nativeInput}
                             placeholder="SR"
                             placeholderTextColor="#3f3f46"
-                            onChangeText={(val) => setAdminForm(p => ({...p, zone: val}))}
+                            onChangeText={(val) => setAdminForm(p => ({ ...p, zone: val }))}
                             value={adminForm.zone}
                           />
                         </View>
@@ -1118,11 +1284,11 @@ export default function TrackingScreen() {
                       <View style={[styles.inputGroup, { flex: 1 }]}>
                         <Text style={styles.inputLabel}>State</Text>
                         <View style={styles.inputWrapper}>
-                          <TextInput 
+                          <TextInput
                             style={styles.nativeInput}
                             placeholder="Kerala"
                             placeholderTextColor="#3f3f46"
-                            onChangeText={(val) => setAdminForm(p => ({...p, state: val}))}
+                            onChangeText={(val) => setAdminForm(p => ({ ...p, state: val }))}
                             value={adminForm.state}
                           />
                         </View>
@@ -1133,12 +1299,12 @@ export default function TrackingScreen() {
                       <View style={[styles.inputGroup, { flex: 1 }]}>
                         <Text style={styles.inputLabel}>Lat</Text>
                         <View style={styles.inputWrapper}>
-                          <TextInput 
+                          <TextInput
                             style={styles.nativeInput}
                             placeholder="11.25"
                             keyboardType="numeric"
                             placeholderTextColor="#3f3f46"
-                            onChangeText={(val) => setAdminForm(p => ({...p, lat: val}))}
+                            onChangeText={(val) => setAdminForm(p => ({ ...p, lat: val }))}
                             value={adminForm.lat}
                           />
                         </View>
@@ -1146,19 +1312,19 @@ export default function TrackingScreen() {
                       <View style={[styles.inputGroup, { flex: 1 }]}>
                         <Text style={styles.inputLabel}>Lng</Text>
                         <View style={styles.inputWrapper}>
-                          <TextInput 
+                          <TextInput
                             style={styles.nativeInput}
                             placeholder="75.78"
                             keyboardType="numeric"
                             placeholderTextColor="#3f3f46"
-                            onChangeText={(val) => setAdminForm(p => ({...p, lng: val}))}
+                            onChangeText={(val) => setAdminForm(p => ({ ...p, lng: val }))}
                             value={adminForm.lng}
                           />
                         </View>
                       </View>
                     </View>
 
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={[styles.saveBtn, { marginTop: 20 }]}
                       disabled={adminLoading}
                       onPress={async () => {
@@ -1190,7 +1356,7 @@ export default function TrackingScreen() {
 
                           console.log('[ADMIN] Server Response:', res);
 
-                          if(res.success) {
+                          if (res.success) {
                             showToast(isEditMode ? 'Station updated!' : 'Station added!', 'success');
                             setAdminForm({ name: '', code: '', zone: '', state: '', lat: '', lng: '' });
                             setIsEditMode(false);
@@ -1200,7 +1366,7 @@ export default function TrackingScreen() {
                           } else {
                             showToast(res.message || 'Operation failed', 'error');
                           }
-                        } catch(e) {
+                        } catch (e) {
                           console.error('[ADMIN] Save Error Detail:', e);
                           showToast('Network error', 'error');
                         } finally {
@@ -1216,7 +1382,7 @@ export default function TrackingScreen() {
                     </TouchableOpacity>
 
                     {isEditMode && (
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         style={styles.cancelEditBtn}
                         onPress={() => {
                           setIsEditMode(false);
@@ -1247,7 +1413,7 @@ export default function TrackingScreen() {
                             <Text style={styles.stationListSub}>{station.zone} • {station.state}</Text>
                           </View>
                           <View style={styles.stationActionRow}>
-                            <TouchableOpacity 
+                            <TouchableOpacity
                               style={styles.stationViewBtn}
                               onPress={() => {
                                 setViewingStation(station);
@@ -1256,7 +1422,7 @@ export default function TrackingScreen() {
                             >
                               <Ionicons name="eye-outline" size={18} color="#fafafa" />
                             </TouchableOpacity>
-                            <TouchableOpacity 
+                            <TouchableOpacity
                               style={styles.stationEditBtn}
                               onPress={() => {
                                 setIsEditMode(true);
@@ -1274,7 +1440,7 @@ export default function TrackingScreen() {
                             >
                               <Ionicons name="create-outline" size={18} color="#6366f1" />
                             </TouchableOpacity>
-                            <TouchableOpacity 
+                            <TouchableOpacity
                               style={styles.stationDeleteBtn}
                               onPress={() => {
                                 setConfirmModal({
@@ -1312,6 +1478,232 @@ export default function TrackingScreen() {
     );
   };
 
+// ─── Utilities ───────────────────────────────────────────────────────────────
+const getTrainState = (train) => {
+  if (!train) return 'upcoming';
+
+  const now = new Date();
+  const currentTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  const depTime = train.expected?.departure || train.scheduled?.departure;
+  const arrTime = train.expected?.arrival || train.scheduled?.arrival;
+
+  if (train.detailedStatus) {
+    if (train.detailedStatus.hasDeparted) return 'departed';
+    if (train.detailedStatus.hasArrived) return 'at_station';
+    return 'upcoming';
+  }
+
+  if (typeof train.status === 'string') {
+    const s = train.status.toUpperCase();
+    if (s.includes('DEPARTED') || s.includes('GONE')) return 'departed';
+    if (s.includes('AT_STATION') || s.includes('ARRIVED')) return 'at_station';
+    if (s.includes('UPCOMING') || s.includes('RUNNING')) return 'upcoming';
+  }
+
+  if (train.status?.hasDeparted) return 'departed';
+  if (train.status?.hasArrived) return 'at_station';
+
+  if (depTime && depTime !== 'On Time' && depTime < currentTimeStr) return 'departed';
+  if (arrTime && arrTime !== 'On Time' && arrTime <= currentTimeStr) return 'at_station';
+
+  return 'upcoming';
+};
+
+const addDelayToTime = (timeStr, delayStr) => {
+  if (!timeStr || timeStr === '--:--') return '--:--';
+  if (!delayStr || delayStr === 'On Time' || delayStr === '00:00' || delayStr === '0 min') return timeStr;
+
+  try {
+    const [h, m] = timeStr.split(':').map(Number);
+    let dh = 0, dm = 0;
+    if (delayStr.includes(':')) {
+      [dh, dm] = delayStr.split(':').map(Number);
+    } else {
+      dm = parseInt(delayStr) || 0;
+    }
+    const date = new Date();
+    date.setHours(h + dh);
+    date.setMinutes(m + dm);
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  } catch (e) {
+    return timeStr;
+  }
+};
+
+const formatTime = (ts) => {
+  if (!ts || typeof ts !== 'number') return ts || '—';
+  try {
+    const date = new Date(ts * 1000);
+    return date.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'Asia/Kolkata'
+    });
+  } catch (e) {
+    return '—';
+  }
+};
+
+  const renderViewTrainModal = () => {
+    const { route = [], fullRoute = [] } = focusedRoute;
+
+    return (
+      <Modal
+        visible={isTrainModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsTrainModalOpen(false)}
+      >
+        <View style={styles.confirmOverlay}>
+          <View style={[styles.confirmContent, { width: '94%', height: '85%', padding: 0, overflow: 'hidden' }]}>
+            <View style={{ backgroundColor: '#1e1b4b', padding: 20, width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#818cf8', fontSize: 12, fontWeight: '700', letterSpacing: 1 }}>TRAIN STATUS</Text>
+                <Text style={{ color: '#fff', fontSize: 20, fontWeight: '900', marginTop: 2 }}>{viewingTrain?.trainNumber}</Text>
+                <Text style={{ color: '#a1a1aa', fontSize: 13 }} numberOfLines={1}>{viewingTrain?.trainName}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setIsTrainModalOpen(false)} style={{ padding: 8 }}>
+                <Ionicons name="close" size={24} color="#fafafa" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={{ flex: 1, backgroundColor: '#09090b' }}
+              contentContainerStyle={{ padding: 16, width: '100%' }}
+            >
+              {trainDetailLoading ? (
+                <View style={{ padding: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color="#6366f1" />
+                  <Text style={{ color: '#71717a', marginTop: 12 }}>Fetching live route...</Text>
+                </View>
+              ) : route.length > 0 ? (
+                <View style={{ width: '100%', paddingRight: 10 }}>
+                  {route.map((stop, idx) => {
+                    const isPassed = stop.hasDeparted || !!stop.actualDeparture;
+                    const isCurrent = (stop.hasArrived || !!stop.actualArrival) && !isPassed;
+                    const delayMin = stop.delayArrivalMinutes || stop.delayDepartureMinutes || stop.delay || 0;
+                    const isDelayed = delayMin > 0;
+
+                    // Resolve Station Name (Case-Insensitive)
+                    const resolvedStation = allStations.find(s =>
+                      s.stationCode?.toUpperCase().trim() === stop.stationCode?.toUpperCase().trim()
+                    );
+                    const resolvedName = resolvedStation?.stationName || stop.stationName || stop.stationCode;
+                    const isCodeOnly = resolvedName === stop.stationCode;
+
+                    // Hide line if it's the absolute last station in the train's journey
+                    const isAbsoluteLast = stop.stationCode === fullRoute[fullRoute.length - 1]?.stationCode;
+
+                    return (
+                      <View key={`route-${stop.stationCode}-${idx}`} style={{ flexDirection: 'row', width: '100%' }}>
+                        {/* Timeline Track */}
+                        <View style={{ alignItems: 'center', width: 30 }}>
+                          <View style={{
+                            width: 2,
+                            flex: 1,
+                            backgroundColor: isPassed ? '#3b82f6' : '#3f3f46',
+                            zIndex: 1,
+                            opacity: isAbsoluteLast ? 0 : 1
+                          }} />
+                          <View style={{
+                            position: 'absolute',
+                            top: 0,
+                            width: 24,
+                            height: 24,
+                            borderRadius: 12,
+                            backgroundColor: isCurrent ? '#3b82f6' : (isPassed ? '#3b82f6' : '#18181b'),
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderWidth: 2,
+                            borderColor: isCurrent ? '#fff' : '#3f3f46',
+                            zIndex: 10,
+                          }}>
+                            {isCurrent ? (
+                              <Ionicons name="train" size={12} color="#fff" />
+                            ) : (
+                              <View style={{
+                                width: 6,
+                                height: 6,
+                                borderRadius: 3,
+                                backgroundColor: isPassed ? '#fff' : '#3f3f46'
+                              }} />
+                            )}
+                          </View>
+                        </View>
+
+                        {/* Station Card */}
+                        <View style={{ flex: 1, marginLeft: 12, marginBottom: 24, minWidth: 200 }}>
+                          <View style={[
+                            styles.premiumTimelineCard,
+                            { width: '100%' },
+                            isCurrent && { borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.05)' },
+                            isPassed && !isCurrent && { opacity: 0.9 }
+                          ]}>
+                            {/* 1. Station Name & Code */}
+                            <Text style={[styles.timelineStationName, isCurrent && { color: '#60a5fa' }]}>
+                              {resolvedName}
+                            </Text>
+                            <Text style={{ color: '#71717a', fontSize: 12, fontWeight: '700' }}>{stop.stationCode}</Text>
+
+                            {/* 2. Delay & Platform Info */}
+                            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, alignItems: 'center' }}>
+                              {isDelayed && (
+                                <View style={styles.delayBadgeSmall}>
+                                  <Text style={styles.delayBadgeTextSmall}>{delayMin}min Late</Text>
+                                </View>
+                              )}
+                              {stop.platform && (
+                                <View style={styles.pfBadgeSmall}>
+                                  <Text style={styles.pfBadgeTextSmall}>PF {stop.platform}</Text>
+                                </View>
+                              )}
+                            </View>
+
+                            {/* 3. Arrival Section */}
+                            <View style={{ marginTop: 16 }}>
+                              <Text style={styles.timeLabelSmall}>Arrival</Text>
+                              <Text style={[styles.timeValueSmall, isPassed && { color: '#60a5fa' }]}>
+                                {formatTime(stop.actualArrival || stop.scheduledArrival)}
+                              </Text>
+                              <Text style={styles.timeSubSmall}>{formatTime(stop.scheduledArrival)}</Text>
+                            </View>
+
+                            {/* 4. Departure Section */}
+                            <View style={{ marginTop: 12 }}>
+                              <Text style={styles.timeLabelSmall}>Departure</Text>
+                              <Text style={[styles.timeValueSmall, isPassed && { color: '#60a5fa' }]}>
+                                {formatTime(stop.actualDeparture || stop.scheduledDeparture)}
+                              </Text>
+                              <Text style={styles.timeSubSmall}>{formatTime(stop.scheduledDeparture)}</Text>
+                            </View>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <View style={{ padding: 40, alignItems: 'center' }}>
+                  <Ionicons name="alert-circle-outline" size={32} color="#3f3f46" />
+                  <Text style={{ color: '#71717a', marginTop: 12 }}>No route data available</Text>
+                </View>
+              )}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={{ backgroundColor: '#18181b', padding: 16, alignItems: 'center', borderTopWidth: 1, borderTopColor: '#27272a' }}
+              onPress={() => setIsTrainModalOpen(false)}
+            >
+              <Text style={{ color: '#fafafa', fontWeight: '700' }}>Close Details</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   const renderViewStationModal = () => (
     <Modal
       visible={isViewModalOpen}
@@ -1320,36 +1712,190 @@ export default function TrackingScreen() {
       onRequestClose={() => setIsViewModalOpen(false)}
     >
       <View style={styles.confirmOverlay}>
-        <View style={[styles.confirmContent, { width: '90%', padding: 0, overflow: 'hidden' }]}>
+        <View style={[styles.confirmContent, { width: '92%', maxWidth: 500, padding: 0, overflow: 'hidden' }]}>
           <View style={{ backgroundColor: '#1e1b4b', padding: 24, width: '100%', alignItems: 'center' }}>
             <Ionicons name="location" size={40} color="#818cf8" />
-            <Text style={[styles.confirmTitle, { marginTop: 12 }]}>Station Details</Text>
-          </View>
-          
-          <View style={{ padding: 24, width: '100%', gap: 16 }}>
-            <DetailItem label="Full Name" value={viewingStation?.stationName || '—'} />
-            <DetailItem label="Station Code" value={viewingStation?.stationCode || '—'} />
-            
-            <View style={{ flexDirection: 'row', gap: 20 }}>
-              <View style={{ flex: 1 }}>
-                <DetailItem label="Zone" value={viewingStation?.zone || '—'} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <DetailItem label="State" value={viewingStation?.state || '—'} />
-              </View>
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 20 }}>
-              <View style={{ flex: 1 }}>
-                <DetailItem label="Latitude" value={viewingStation?.coordinates?.lat || viewingStation?.location?.coordinates?.[1] || '—'} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <DetailItem label="Longitude" value={viewingStation?.coordinates?.lng || viewingStation?.location?.coordinates?.[0] || '—'} />
-              </View>
-            </View>
+            <Text style={[styles.confirmTitle, { marginTop: 12 }]} numberOfLines={1}>Station Details</Text>
           </View>
 
-          <TouchableOpacity 
+          <ScrollView style={{ width: '100%', maxHeight: 450 }}>
+            <View style={{ padding: 24, width: '100%', gap: 16 }}>
+              <DetailItem label="Full Name" value={viewingStation?.stationName || '—'} />
+              <DetailItem label="Station Code" value={viewingStation?.stationCode || '—'} />
+
+              <View style={{ flexDirection: 'row', gap: 20 }}>
+                <View style={{ flex: 1 }}>
+                  <DetailItem label="Zone" value={viewingStation?.zone || '—'} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <DetailItem label="State" value={viewingStation?.state || '—'} />
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: 20 }}>
+                <View style={{ flex: 1 }}>
+                  <DetailItem label="Latitude" value={viewingStation?.coordinates?.lat || viewingStation?.location?.coordinates?.[1] || '—'} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <DetailItem label="Longitude" value={viewingStation?.coordinates?.lng || viewingStation?.location?.coordinates?.[0] || '—'} />
+                </View>
+              </View>
+
+              <Separator style={{ marginVertical: 8 }} />
+
+              <View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <Text style={styles.minimalLabel}>LIVE DEPARTURES</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#18181b', borderRadius: 6, paddingHorizontal: 8, height: 32, width: 140 }}>
+                      <Ionicons name="search" size={14} color="#71717a" />
+                      <TextInput
+                        placeholder="Train #..."
+                        placeholderTextColor="#3f3f46"
+                        style={{ color: '#fafafa', fontSize: 12, marginLeft: 4, flex: 1, padding: 0 }}
+                        value={trainSearchQuery}
+                        onChangeText={setTrainSearchQuery}
+                      />
+                    </View>
+                    {stationModalLoading && <ActivityIndicator size="small" color="#6366f1" />}
+                  </View>
+                </View>
+
+                {stationModalBoard && filteredTrains.length > 0 ? (
+                  <View style={{ gap: 8 }}>
+                    <View>
+                      {/* Modal At Station Section */}
+                      {filteredTrains.filter(t => getTrainState(t) === 'at_station').length > 0 && (
+                        <View>
+                          <Text style={[styles.subSectionLabel, { color: '#4ade80' }]}>At Station</Text>
+                          {filteredTrains.filter(t => getTrainState(t) === 'at_station').map((train, idx) => {
+                            const resolvedDest = allStations.find(s => 
+                              s.stationCode?.toUpperCase().trim() === train.toCode?.toUpperCase().trim()
+                            )?.stationName || train.toCode || 'Unknown';
+
+                            return (
+                              <View key={`modal-at-${train.trainNumber}-${idx}`} style={[styles.trainRowMinimal, { borderBottomColor: '#18181b', backgroundColor: 'rgba(74, 222, 128, 0.05)', borderRadius: 8, paddingHorizontal: 8 }]}>
+                                <View style={styles.trainRowLeft}>
+                                  <Text style={styles.trainNumText}>{train.trainNumber}</Text>
+                                  <Text style={styles.trainDestText} numberOfLines={1}>{resolvedDest}</Text>
+                                </View>
+                                <View style={styles.trainRowRight}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <View style={{ alignItems: 'flex-end' }}>
+                                      <Text style={[styles.trainTimeText, { color: '#4ade80' }]}>Platform {train.platform || '—'}</Text>
+                                      <Text style={styles.trainDelayText}>
+                                        Exp: {addDelayToTime(train.scheduled?.departure, train.delay?.departure)}
+                                        {train.delay?.departure && train.delay.departure !== '0 min' && ` (+${train.delay.departure})`}
+                                      </Text>
+                                    </View>
+                                    <TouchableOpacity
+                                      style={[styles.trainViewBtn, { backgroundColor: '#18181b' }]}
+                                      onPress={() => {
+                                        setViewingTrain(train);
+                                        setIsTrainModalOpen(true);
+                                      }}
+                                    >
+                                      <Ionicons name="eye-outline" size={14} color="#fafafa" />
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+
+                      {/* Modal Upcoming Section */}
+                      {filteredTrains.filter(t => getTrainState(t) === 'upcoming').length > 0 && (
+                        <View style={{ marginTop: 12 }}>
+                          <Text style={styles.subSectionLabel}>Upcoming</Text>
+                          {filteredTrains.filter(t => getTrainState(t) === 'upcoming').map((train, idx) => {
+                            const resolvedDest = allStations.find(s => 
+                              s.stationCode?.toUpperCase().trim() === train.toCode?.toUpperCase().trim()
+                            )?.stationName || train.toCode || 'Unknown';
+
+                            return (
+                              <View key={`modal-up-${train.trainNumber}-${idx}`} style={[styles.trainRowMinimal, { borderBottomColor: '#18181b' }]}>
+                                <View style={styles.trainRowLeft}>
+                                  <Text style={styles.trainNumText}>{train.trainNumber}</Text>
+                                  <Text style={styles.trainDestText} numberOfLines={1}>{resolvedDest}</Text>
+                                </View>
+                                <View style={styles.trainRowRight}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <View style={{ alignItems: 'flex-end' }}>
+                                      <Text style={styles.trainTimeText}>Arrival: {train.scheduled?.arrival || '--:--'}</Text>
+                                      <Text style={styles.trainDelayText}>
+                                        Exp: {addDelayToTime(train.scheduled?.arrival, train.delay?.arrival)}
+                                        {train.delay?.arrival && train.delay.arrival !== '0 min' && ` (+${train.delay.arrival})`}
+                                      </Text>
+                                    </View>
+                                    <TouchableOpacity
+                                      style={[styles.trainViewBtn, { backgroundColor: '#18181b' }]}
+                                      onPress={() => {
+                                        setViewingTrain(train);
+                                        setIsTrainModalOpen(true);
+                                      }}
+                                    >
+                                      <Ionicons name="eye-outline" size={14} color="#fafafa" />
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+
+                      {/* Modal Departed Section */}
+                      {filteredTrains.filter(t => getTrainState(t) === 'departed').length > 0 && (
+                        <View style={{ marginTop: 20 }}>
+                          <Text style={styles.subSectionLabel}>Gone</Text>
+                          {filteredTrains.filter(t => getTrainState(t) === 'departed').map((train, idx) => {
+                            const resolvedDest = allStations.find(s => 
+                              s.stationCode?.toUpperCase().trim() === train.toCode?.toUpperCase().trim()
+                            )?.stationName || train.toCode || 'Unknown';
+
+                            return (
+                              <View key={`modal-dep-${train.trainNumber}-${idx}`} style={[styles.trainRowMinimal, { borderBottomColor: '#18181b', opacity: 0.5 }]}>
+                                <View style={styles.trainRowLeft}>
+                                  <Text style={styles.trainNumText}>{train.trainNumber}</Text>
+                                  <Text style={styles.trainDestText} numberOfLines={1}>{resolvedDest}</Text>
+                                </View>
+                                <View style={styles.trainRowRight}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <View style={{ alignItems: 'flex-end' }}>
+                                      <Text style={[styles.trainTimeText, { color: '#71717a' }]}>Departed</Text>
+                                      <Text style={styles.trainDelayText}>{addDelayToTime(train.scheduled?.departure, train.delay?.departure)}</Text>
+                                    </View>
+                                    <TouchableOpacity
+                                      style={[styles.trainViewBtn, { backgroundColor: '#18181b' }]}
+                                      onPress={() => {
+                                        setViewingTrain(train);
+                                        setIsTrainModalOpen(true);
+                                      }}
+                                    >
+                                      <Ionicons name="eye-outline" size={14} color="#71717a" />
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                ) : !stationModalLoading ? (
+                  <View style={styles.emptyStateContainer}>
+                    <Ionicons name="calendar-outline" size={24} color="#3f3f46" />
+                    <Text style={styles.emptyText}>No upcoming trains scheduled.</Text>
+                  </View>
+                ) : null}
+              </View>
+            </View>
+          </ScrollView>
+
+          <TouchableOpacity
             style={[styles.saveBtn, { width: '80%', marginBottom: 24, marginTop: 0 }]}
             onPress={() => setIsViewModalOpen(false)}
           >
@@ -1375,7 +1921,7 @@ export default function TrackingScreen() {
             <Text style={styles.appSubtitle}>Smart Auto-Detection</Text>
           </View>
           <View style={styles.headerRight}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.menuBtn}
               onPress={() => {
                 setDrawerTab('list');
@@ -1399,13 +1945,13 @@ export default function TrackingScreen() {
                   We think you're traveling on <Text style={styles.boldText}>{matchedTrainData.train.trainNumber} - {matchedTrainData.train.trainName}</Text> from {matchedTrainData.departureStation}.
                 </Text>
                 <View style={styles.confirmationButtons}>
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={[styles.premiumButton, { flex: 1, marginRight: 10 }]}
                     onPress={confirmBoarding}
                   >
                     <Text style={styles.premiumButtonText}>Confirm</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={[styles.premiumButton, { flex: 1, backgroundColor: '#3f3f46' }]}
                     onPress={rejectBoarding}
                   >
@@ -1417,7 +1963,7 @@ export default function TrackingScreen() {
 
             {/* Main Action Area */}
             <View style={styles.actionContainer}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.mainActionButton, isTracking ? styles.mainActionStop : styles.mainActionStart]}
                 onPress={isTracking ? stopTracking : startTracking}
                 disabled={trackingStatus === TRACKING_STATUS.LOADING}
@@ -1445,7 +1991,7 @@ export default function TrackingScreen() {
                     <Text style={styles.minimalDistance}>
                       {roadDistance !== null ? formatDistance(roadDistance) : formatDistance(distanceMeters)}
                     </Text>
-                    <Text style={[styles.minimalStatus, (distanceMeters !== null && distanceMeters <= BOUNDARY_METERS) ? {color: '#10b981'} : {color: '#f59e0b'}]}>
+                    <Text style={[styles.minimalStatus, (distanceMeters !== null && distanceMeters <= BOUNDARY_METERS) ? { color: '#10b981' } : { color: '#f59e0b' }]}>
                       {(distanceMeters !== null && distanceMeters <= BOUNDARY_METERS) ? 'In Range' : 'Out of Range'}
                     </Text>
                   </View>
@@ -1459,31 +2005,128 @@ export default function TrackingScreen() {
                   <Text style={styles.minimalLabel}>LIVE DEPARTURES</Text>
                   {liveBoardLoading && <Text style={styles.minimalSub}>Updating...</Text>}
                 </View>
-                
+
                 {liveBoardError && (
                   <Text style={styles.errorTextMinimal}>{liveBoardError}</Text>
                 )}
-                
+
                 {liveBoard && !liveBoardLoading && liveBoard.trains.length === 0 && (
                   <Text style={styles.emptyText}>No trains in next 2 hours.</Text>
                 )}
 
-                {liveBoard && !liveBoardLoading && liveBoard.trains?.slice(0, 3).map((train, idx) => (
-                  <View key={`live-train-${train.trainNumber}-${idx}`} style={styles.trainRowMinimal}>
-                    <View style={styles.trainRowLeft}>
-                      <Text style={styles.trainNumText}>{train.trainNumber}</Text>
-                      <Text style={styles.trainDestText}>{train.toCode || 'Unknown'}</Text>
-                    </View>
-                    <View style={styles.trainRowRight}>
-                      <Text style={styles.trainTimeText}>{train.expected?.departure || train.scheduled?.departure || '--:--'}</Text>
-                      {train.delay?.departure && train.delay.departure !== '0 min' && (
-                        <Text style={styles.trainDelayText}>+{train.delay.departure}</Text>
-                      )}
-                    </View>
+                {liveBoard && !liveBoardLoading && (
+                  <View>
+                    {/* At Station Section */}
+                    {liveBoard.trains?.filter(t => getTrainState(t) === 'at_station').length > 0 && (
+                      <View>
+                        <Text style={[styles.subSectionLabel, { color: '#4ade80' }]}>At Station</Text>
+                        {liveBoard.trains.filter(t => getTrainState(t) === 'at_station').slice(0, 2).map((train, idx) => (
+                          <View key={`live-at-${train.trainNumber}-${idx}`} style={[styles.trainRowMinimal, { backgroundColor: 'rgba(74, 222, 128, 0.05)', borderRadius: 8, paddingHorizontal: 8 }]}>
+                            <View style={styles.trainRowLeft}>
+                              <Text style={styles.trainNumText}>{train.trainNumber}</Text>
+                              <Text style={styles.trainDestText}>{train.toCode || 'Unknown'}</Text>
+                            </View>
+                            <View style={styles.trainRowRight}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={{ alignItems: 'flex-end' }}>
+                                  <Text style={[styles.trainTimeText, { color: '#4ade80' }]}>Platform {train.platform || '—'}</Text>
+                                  <Text style={styles.trainDelayText}>Dep: {train.expected?.departure || train.scheduled?.departure || '--:--'}</Text>
+                                </View>
+                                <TouchableOpacity
+                                  style={styles.trainViewBtn}
+                                  onPress={() => {
+                                    setViewingTrain(train);
+                                    setIsTrainModalOpen(true);
+                                  }}
+                                >
+                                  <Ionicons name="eye-outline" size={16} color="#fafafa" />
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* Upcoming Section */}
+                    {liveBoard.trains?.filter(t => getTrainState(t) === 'upcoming').length > 0 && (
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={styles.subSectionLabel}>Upcoming</Text>
+                        {liveBoard.trains.filter(t => getTrainState(t) === 'upcoming').slice(0, 3).map((train, idx) => (
+                          <View key={`live-upcoming-${train.trainNumber}-${idx}`} style={styles.trainRowMinimal}>
+                            <View style={styles.trainRowLeft}>
+                              <Text style={styles.trainNumText}>{train.trainNumber}</Text>
+                              <Text style={styles.trainDestText}>{train.toCode || 'Unknown'}</Text>
+                            </View>
+                            <View style={styles.trainRowRight}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={{ alignItems: 'flex-end' }}>
+                                  <Text style={styles.trainTimeText}>
+                                    {train.expected?.departure === 'On Time' ? (train.scheduled?.departure || 'On Time') : (train.expected?.departure || train.scheduled?.departure || '--:--')}
+                                  </Text>
+                                  {train.delay?.departure && train.delay.departure !== '0 min' && train.delay.departure !== 'On Time' && (
+                                    <Text style={styles.trainDelayText}>+{train.delay.departure}</Text>
+                                  )}
+                                  {train.delay?.departure === 'On Time' && (
+                                    <Text style={[styles.trainDelayText, { color: '#4ade80' }]}>On Time</Text>
+                                  )}
+                                </View>
+                                <TouchableOpacity
+                                  style={styles.trainViewBtn}
+                                  onPress={() => {
+                                    setViewingTrain(train);
+                                    setIsTrainModalOpen(true);
+                                  }}
+                                >
+                                  <Ionicons name="eye-outline" size={16} color="#fafafa" />
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* Gone Section */}
+                    {liveBoard.trains?.filter(t => getTrainState(t) === 'departed').length > 0 && (
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={[styles.subSectionLabel, { color: '#71717a' }]}>Gone</Text>
+                        {liveBoard.trains.filter(t => getTrainState(t) === 'departed').slice(0, 2).map((train, idx) => (
+                          <View key={`live-departed-${train.trainNumber}-${idx}`} style={[styles.trainRowMinimal, { opacity: 0.6 }]}>
+                            <View style={styles.trainRowLeft}>
+                              <Text style={styles.trainNumText}>{train.trainNumber}</Text>
+                              <Text style={styles.trainDestText}>{train.toCode || 'Unknown'}</Text>
+                            </View>
+                            <View style={styles.trainRowRight}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={{ alignItems: 'flex-end' }}>
+                                  <Text style={[styles.trainTimeText, { color: '#71717a' }]}>Departed</Text>
+                                  <Text style={styles.trainDelayText}>{addDelayToTime(train.scheduled?.departure, train.delay?.departure)}</Text>
+                                </View>
+                                <TouchableOpacity
+                                  style={styles.trainViewBtn}
+                                  onPress={() => {
+                                    setViewingTrain(train);
+                                    setIsTrainModalOpen(true);
+                                  }}
+                                >
+                                  <Ionicons name="eye-outline" size={16} color="#71717a" />
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                    )}
                   </View>
-                ))}
-                {liveBoard && liveBoard.trains?.length > 3 && (
-                  <Text style={styles.moreText}>+{liveBoard.trains.length - 3} more trains</Text>
+                )}
+                {liveBoard && liveBoard.trains?.length > 5 && (
+                  <TouchableOpacity onPress={() => {
+                    setViewingStation(nearestStation);
+                    setIsViewModalOpen(true);
+                  }}>
+                    <Text style={styles.moreText}>See more in details</Text>
+                  </TouchableOpacity>
                 )}
               </View>
             )}
@@ -1505,7 +2148,7 @@ export default function TrackingScreen() {
                   <View style={[styles.speedIndicatorFill, { width: `${Math.min(liveSpeed, 120) / 1.2}%` }]} />
                 </View>
               </View>
-              
+
               <View style={styles.accuracyNote}>
                 <Ionicons name="shield-checkmark" size={14} color="#10b981" />
                 <Text style={styles.accuracyText}>High-Precision GPS Active</Text>
@@ -1549,7 +2192,7 @@ export default function TrackingScreen() {
           <View style={styles.tabContent}>
             <View style={styles.minimalCard}>
               <Text style={styles.minimalLabel}>QUICK ACTIONS</Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.saveBtn, { marginTop: 0 }]}
                 onPress={() => {
                   setDrawerTab('add');
@@ -1562,7 +2205,7 @@ export default function TrackingScreen() {
 
             <View style={[styles.minimalCard, { marginTop: 16 }]}>
               <Text style={styles.minimalLabel}>DATA MANAGEMENT</Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.saveBtn, { backgroundColor: '#450a0a', shadowColor: '#ef4444' }]}
                 onPress={async () => {
                   setTripHistory([]);
@@ -1590,7 +2233,7 @@ export default function TrackingScreen() {
             </View>
           </View>
         )}
-        
+
         <View style={{ height: 100 }} />
       </ScrollView>
 
@@ -1617,6 +2260,7 @@ export default function TrackingScreen() {
       {renderAuthModal()}
       {renderConfirmModal()}
       {renderViewStationModal()}
+      {renderViewTrainModal()}
     </SafeAreaView>
   );
 }
@@ -1704,7 +2348,59 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
 
-  // ── Shared Splash/Permission ──
+  premiumTimelineCard: {
+    backgroundColor: '#18181b',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  timelineStationName: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#fafafa',
+  },
+  pfBadgeSmall: {
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.3)',
+  },
+  pfBadgeTextSmall: {
+    color: '#60a5fa',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  delayBadgeSmall: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  delayBadgeTextSmall: {
+    color: '#ef4444',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  timeLabelSmall: {
+    color: '#52525b',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  timeValueSmall: {
+    color: '#fafafa',
+    fontSize: 15,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  timeSubSmall: {
+    color: '#3f3f46',
+    fontSize: 10,
+    marginTop: 2,
+  },
   permissionCenter: {
     flex: 1,
     alignItems: 'center',
@@ -1869,7 +2565,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   confirmContent: {
-    width: '85%',
+    width: '90%',
+    maxWidth: 500,
     backgroundColor: '#09090b',
     borderRadius: 20,
     padding: 24,
@@ -1993,7 +2690,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.85)',
   },
   authModalContent: {
-    width: '80%',
+    width: '90%',
+    maxWidth: 400,
     backgroundColor: '#09090b',
     borderRadius: 24,
     padding: 30,
@@ -2063,6 +2761,7 @@ const styles = StyleSheet.create({
   },
   drawerContent: {
     width: '85%',
+    maxWidth: 450,
     backgroundColor: '#09090b',
     height: '100%',
     borderRightWidth: 1,
@@ -2278,6 +2977,15 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
+  subSectionLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#71717a',
+    letterSpacing: 1,
+    marginTop: 12,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2409,7 +3117,7 @@ const styles = StyleSheet.create({
     color: '#fafafa',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
-  
+
   // ── Bottom Nav Bar ────────────────────────────────────────────────────────
   bottomNav: {
     position: 'absolute',
@@ -2597,6 +3305,16 @@ const styles = StyleSheet.create({
   },
   trainRowRight: {
     alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  trainViewBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#27272a',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 12,
   },
   trainNumText: {
     fontSize: 15,
@@ -2674,6 +3392,16 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     paddingVertical: 10,
   },
+  emptyStateContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    backgroundColor: '#18181b',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#27272a',
+    borderStyle: 'dashed',
+  },
   errorTextMinimal: {
     color: '#ef4444',
     fontSize: 13,
@@ -2749,7 +3477,7 @@ const styles = StyleSheet.create({
   liveBoardError: {
     paddingVertical: 12,
   },
-  
+
   // ── Speedometer Styles ──
   speedCircle: {
     alignItems: 'center',

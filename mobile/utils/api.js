@@ -44,7 +44,8 @@ export async function fetchNearbyStations(lat, lng, radius = 5000) {
  * @returns {Promise<{stationCode, totalTrains, trains: Array}>}
  */
 export async function fetchStationLiveBoard(stationCode) {
-  const url = `${API_BASE_URL}/api/stations/${encodeURIComponent(stationCode)}/live`;
+  const apiKey = 'rr_as97u1l1wby7ueobdx3uc5cieea9b3sp';
+  const url = `https://api.railradar.org/api/v1/stations/${encodeURIComponent(stationCode)}/live?apiKey=${apiKey}&hours=2`;
 
   const response = await fetch(url, {
     method: 'GET',
@@ -59,8 +60,42 @@ export async function fetchStationLiveBoard(stationCode) {
 
   const data = await response.json();
 
-  if (!data.success) {
-    throw new Error(data.message || 'Live board fetch failed');
+  // Map RailRadar structure to the format TrackingScreen expects
+  if (data.success && data.data && data.data.trains) {
+    const mappedTrains = data.data.trains.map(t => ({
+      trainNumber: t.train?.number,
+      trainName: t.train?.name,
+      toCode: t.train?.destinationStationCode,
+      fromCode: t.train?.sourceStationCode,
+      platform: t.platform,
+      scheduled: {
+        arrival: t.schedule?.arrival,
+        departure: t.schedule?.departure
+      },
+      delay: {
+        arrival: t.live?.arrivalDelayDisplay,
+        departure: t.live?.departureDelayDisplay
+      },
+      expected: {
+        // RailRadar provides delay durations in these fields usually
+        arrival: t.live?.arrivalDelayDisplay,
+        departure: t.live?.departureDelayDisplay
+      },
+      status: {
+        hasArrived: t.status?.hasArrived,
+        hasDeparted: t.status?.hasDeparted
+      }
+    }));
+
+    return {
+      success: true,
+      data: {
+        stationName: data.data.station?.name,
+        stationCode: data.data.station?.code,
+        totalTrains: data.data.totalTrains,
+        trains: mappedTrains
+      }
+    };
   }
 
   return data;
@@ -221,6 +256,29 @@ export async function verifyAdminPasscode(passcode) {
     },
     body: JSON.stringify({ passcode }),
   });
+
+  return response.json();
+}
+
+/**
+ * Fetch full train details including route and live status
+ * @param {string} trainNumber 
+ */
+export async function fetchTrainDetails(trainNumber) {
+  const apiKey = 'rr_as97u1l1wby7ueobdx3uc5cieea9b3sp';
+  const today = new Date().toISOString().split('T')[0];
+  const url = `https://api.railradar.org/api/v1/trains/${encodeURIComponent(trainNumber)}?apiKey=${apiKey}&dataType=live&journeyDate=${today}`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Train details API error: ${response.status}`);
+  }
 
   return response.json();
 }
