@@ -269,32 +269,51 @@ router.get('/:code/live', async (req, res) => {
 
           const schedArr = tsToHHMM(stop.scheduledArrival);
           const delay = stop.delayArrivalMinutes || 0;
+          
+          const destCode = data.train?.destinationStationCode || route[route.length-1]?.stationCode;
+          const isTerminating = destCode?.toUpperCase().trim() === stationCode.trim();
+
+          let category = stop.actualDeparture ? 'GONE' : (stop.actualArrival ? 'AT_STATION' : (isApproaching ? 'APPROACHING' : 'UPCOMING'));
+          
+          // Fix Bug 4: Terminating trains move to GONE after arrival
+          if (category === 'AT_STATION' && isTerminating) {
+            category = 'GONE';
+          }
 
           return {
             trainNumber: num,
             trainName: trainNameCache.get(num) || data.train?.name || 'Express',
-            toCode: data.train?.destinationStationCode || route[route.length-1]?.stationCode,
+            toCode: destCode,
+            toName: data.train?.destinationStationName || route[route.length-1]?.stationName || destCode,
             fromCode: data.train?.sourceStationCode || route[0]?.stationCode,
+            fromName: data.train?.sourceStationName || route[0]?.stationName,
             platform: stop.platform || stationMatch?.platform || null,
             expectedArrival: addMinutesToTime(schedArr, delay) || schedArr,
             delayMinutes: delay,
             isApproaching,
             status: { hasArrived: !!stop.actualArrival, hasDeparted: !!stop.actualDeparture },
-            _category: stop.actualDeparture ? 'GONE' : (stop.actualArrival ? 'AT_STATION' : (isApproaching ? 'APPROACHING' : 'UPCOMING'))
+            _category: category
           };
         } catch (e) {
           if (!stationMatch) return null;
           const delay = parseDelayDisplay(stationMatch.live?.arrivalDelayDisplay);
+          const destCode = stationMatch.toCode || stationMatch.train?.destinationStationCode;
+          const isTerminating = destCode?.toUpperCase().trim() === stationCode.trim();
+          
+          let category = stationMatch.live?.hasDeparted ? 'GONE' : (stationMatch.live?.hasArrived ? 'AT_STATION' : 'UPCOMING');
+          if (category === 'AT_STATION' && isTerminating) category = 'GONE';
+
           return {
             trainNumber: num,
             trainName: trainNameCache.get(num) || stationMatch.train?.name || 'Express',
-            toCode: stationMatch.toCode || stationMatch.train?.destinationStationCode,
+            toCode: destCode,
+            toName: stationMatch.toName || stationMatch.train?.destinationStationName || destCode,
             platform: stationMatch.platform,
             expectedArrival: stationMatch.expectedArrival || stationMatch.scheduledArrival,
             delayMinutes: delay,
             isApproaching: false,
             status: { hasArrived: !!stationMatch.live?.hasArrived, hasDeparted: !!stationMatch.live?.hasDeparted },
-            _category: stationMatch.live?.hasDeparted ? 'GONE' : (stationMatch.live?.hasArrived ? 'AT_STATION' : 'UPCOMING'),
+            _category: category,
             _isStale: true
           };
         }

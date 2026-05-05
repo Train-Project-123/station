@@ -61,6 +61,14 @@ const StationDetailsModal = ({ isOpen, onClose, station, allStations }) => {
     } catch { return null; }
   };
 
+  const formatDelay = (minutes) => {
+    if (!minutes || minutes === 0) return null;
+    if (minutes < 60) return `+${minutes}m`;
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return m > 0 ? `+${h}h ${m}m` : `+${h}h`;
+  };
+
   const getTrainState = (train) => {
     if (train.status?.hasDeparted) return 'departed';
     if (train.status?.hasArrived) return 'at_station';
@@ -109,6 +117,7 @@ const StationDetailsModal = ({ isOpen, onClose, station, allStations }) => {
     const depTime = fmt12h(train.scheduled?.departure);
     const arrTime = fmt12h(train.expectedArrival || train.scheduledArrival);
     const delay = train.delayMinutes || 0;
+    const destName = train.toName || train.toCode || 'Unknown';
 
     const isAtStation = category === 'AT_STATION';
     const isApproaching = category === 'APPROACHING';
@@ -136,21 +145,26 @@ const StationDetailsModal = ({ isOpen, onClose, station, allStations }) => {
             </View>
           </View>
           <Text style={styles.trainName} numberOfLines={1}>{train.trainName}</Text>
-          <Text style={styles.destText}>to {resolvedDest}</Text>
+          <Text style={styles.destText}>to {destName}</Text>
         </View>
 
         <View style={styles.rightActions}>
           <View style={styles.timeInfo}>
             {isAtStation ? (
               <Text style={styles.atStationText}>
-                {train.platform ? `P${train.platform}` : 'At Platform'}
+                {train.platform ? `P${train.platform}` : 'P TBA'}
               </Text>
             ) : isDeparted ? (
               <Text style={styles.departedText}>Departed</Text>
             ) : (
               <Text style={styles.upcomingTime}>{arrTime || 'Upcoming'}</Text>
             )}
-            {!isDeparted && delay > 0 && <Text style={styles.delayText}>+{delay}m</Text>}
+            {!isDeparted && delay > 0 && (
+              <Text style={styles.delayText}>{formatDelay(delay)}</Text>
+            )}
+            {!isAtStation && !isDeparted && train.platform && (
+              <Text style={{ color: '#71717a', fontSize: 10, fontWeight: '700', marginTop: 2 }}>P{train.platform}</Text>
+            )}
           </View>
           <TouchableOpacity style={styles.viewBtn} onPress={() => handleViewTrain(train)}>
             <Ionicons name="eye-outline" size={16} color="#fafafa" />
