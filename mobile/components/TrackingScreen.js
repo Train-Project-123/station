@@ -137,6 +137,7 @@ export default function TrackingScreen() {
         setIsAuthModalOpen(false);
         setPasscodeInput('');
         setIsDrawerOpen(true);
+        loadAllStations();
       } else {
         setAuthError(true);
       }
