@@ -20,7 +20,6 @@ const StationDetailsModal = ({ isOpen, onClose, station, liveBoard, allStations 
   const [trainDetailData, setTrainDetailData] = useState(null);
   const [trainDetailLoading, setTrainDetailLoading] = useState(false);
 
-  if (!station) return null;
 
   const fmt12h = (timeStr) => {
     if (!timeStr || timeStr === '--:--' || !timeStr.includes(':')) return null;
@@ -53,6 +52,8 @@ const StationDetailsModal = ({ isOpen, onClose, station, liveBoard, allStations 
       trains: liveBoard.trains?.filter(filterFn) || []
     };
   }, [liveBoard, trainSearchQuery]);
+  
+  if (!station) return null;
 
   const handleViewTrain = async (train) => {
     setViewingTrain(train);
