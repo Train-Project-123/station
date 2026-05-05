@@ -53,13 +53,9 @@ function addMinutesToTime(timeStr, delayMinutes) {
   return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 }
 
-// ─── Helper: Fetch a single train's live details from RailRadar ───────────────
-// Train API response shape (data field):
-//   trainNumber, route: [{ stationCode, scheduledArrival (unix), scheduledDeparture (unix),
-//     actualArrival (unix|null), actualDeparture (unix|null), delayArrivalMinutes, platform }]
+
 async function fetchTrainLiveDetails(trainNumber, apiKey) {
-  // RailRadar often prefers DD-MM-YYYY or YYYY-MM-DD. 
-  // Let's ensure we try both if one fails, or use a safer default.
+  
   const now = new Date();
   const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
   
