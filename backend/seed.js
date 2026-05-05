@@ -1,5 +1,5 @@
 /**
- * Seed Script — Inserts Kakkanchery station into MongoDB
+ * Seed Script — Restores common Kerala stations
  * Run: node seed.js
  */
 
@@ -16,11 +16,64 @@ const stations = [
     zone: 'Southern Railway',
     division: 'Palakkad',
     state: 'Kerala',
-    location: {
-      type: 'Point',
-      coordinates: [75.893304, 11.152122], // [longitude, latitude] — GeoJSON
-    },
+    location: { type: 'Point', coordinates: [75.893304, 11.152122] },
   },
+  {
+    stationName: 'Ernakulam Junction',
+    stationCode: 'ERS',
+    zone: 'Southern Railway',
+    division: 'Thiruvananthapuram',
+    state: 'Kerala',
+    location: { type: 'Point', coordinates: [76.2882, 9.9658] },
+  },
+  {
+    stationName: 'Ernakulam Town',
+    stationCode: 'ERN',
+    zone: 'Southern Railway',
+    division: 'Thiruvananthapuram',
+    state: 'Kerala',
+    location: { type: 'Point', coordinates: [76.2894, 9.9917] },
+  },
+  {
+    stationName: 'Shoranur Junction',
+    stationCode: 'SRR',
+    zone: 'Southern Railway',
+    division: 'Palakkad',
+    state: 'Kerala',
+    location: { type: 'Point', coordinates: [76.2711, 10.7621] },
+  },
+  {
+    stationName: 'Pattambi',
+    stationCode: 'PTB',
+    zone: 'Southern Railway',
+    division: 'Palakkad',
+    state: 'Kerala',
+    location: { type: 'Point', coordinates: [76.1953, 10.8122] },
+  },
+  {
+    stationName: 'Trivandrum Central',
+    stationCode: 'TVC',
+    zone: 'Southern Railway',
+    division: 'Thiruvananthapuram',
+    state: 'Kerala',
+    location: { type: 'Point', coordinates: [76.9500, 8.4875] },
+  },
+  {
+    stationName: 'Thrissur',
+    stationCode: 'TCR',
+    zone: 'Southern Railway',
+    division: 'Thiruvananthapuram',
+    state: 'Kerala',
+    location: { type: 'Point', coordinates: [76.2084, 10.5190] },
+  },
+  {
+    stationName: 'Kozhikode',
+    stationCode: 'CLT',
+    zone: 'Southern Railway',
+    division: 'Palakkad',
+    state: 'Kerala',
+    location: { type: 'Point', coordinates: [75.7891, 11.2485] },
+  }
 ];
 
 async function seed() {
@@ -28,9 +81,6 @@ async function seed() {
     await mongoose.connect(MONGO_URI);
     console.log('[SEED] ✅ Connected to MongoDB');
 
-    console.log('[SEED] ✅ Connected to MongoDB');
-
-    // Safe Seed: Use upsert instead of deleteMany to preserve user data
     for (const s of stations) {
       await Station.findOneAndUpdate(
         { stationCode: s.stationCode },
@@ -38,19 +88,8 @@ async function seed() {
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
     }
-    console.log(`[SEED] 🌱 Upserted ${stations.length} station(s)`);
-    console.log(`[SEED] 🌱 Upserted ${stations.length} station(s) successfully.`);
-
-    // Verify 2dsphere index
-    const indexes = await Station.collection.indexes();
-    const geoIndex = indexes.find((i) => i.key && i.key.location === '2dsphere');
-    if (geoIndex) {
-      console.log('[SEED] 📍 2dsphere index confirmed:', geoIndex.name);
-    } else {
-      console.warn('[SEED] ⚠️  2dsphere index NOT found — ensure model is initialized first');
-    }
-
-    console.log('[SEED] ✅ Seeding complete!');
+    
+    console.log(`[SEED] 🌱 Successfully upserted ${stations.length} stations.`);
   } catch (err) {
     console.error('[SEED] ❌ Error:', err.message);
   } finally {

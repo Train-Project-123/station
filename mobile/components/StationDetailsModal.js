@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,18 +7,48 @@ import {
   StyleSheet,
   Modal,
   TextInput,
-  ActivityIndicator
+  ActivityIndicator,
+  RefreshControl
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import TrainDetailsModal from './TrainDetailsModal';
-import { fetchTrainDetails } from '../utils/api';
+import { fetchTrainDetails, fetchStationLiveBoard } from '../utils/api';
 
-const StationDetailsModal = ({ isOpen, onClose, station, liveBoard, allStations }) => {
+const StationDetailsModal = ({ isOpen, onClose, station, allStations }) => {
   const [trainSearchQuery, setTrainSearchQuery] = useState('');
   const [isTrainModalOpen, setIsTrainModalOpen] = useState(false);
   const [viewingTrain, setViewingTrain] = useState(null);
   const [trainDetailData, setTrainDetailData] = useState(null);
   const [trainDetailLoading, setTrainDetailLoading] = useState(false);
+
+  const [liveBoard, setLiveBoard] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadLiveBoard = async (isRefresh = false) => {
+    if (!station) return;
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+
+    try {
+      const res = await fetchStationLiveBoard(station.stationCode);
+      setLiveBoard(res.data || res);
+    } catch (e) {
+      console.error('[STATION DETAIL] Failed to fetch board:', e);
+      setLiveBoard(null);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && station) {
+      loadLiveBoard();
+    } else {
+      setLiveBoard(null);
+    }
+  }, [isOpen, station?.stationCode]);
 
 
   const fmt12h = (timeStr) => {
@@ -142,8 +172,19 @@ const StationDetailsModal = ({ isOpen, onClose, station, liveBoard, allStations 
             />
           </View>
 
-          <ScrollView style={styles.scroll} contentContainerStyle={{ padding: 20 }}>
-            {!filteredBoard || filteredBoard.trains.length === 0 ? (
+          <ScrollView 
+            style={styles.scroll} 
+            contentContainerStyle={{ padding: 20 }}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={() => loadLiveBoard(true)} tintColor="#818cf8" />
+            }
+          >
+            {loading ? (
+              <View style={styles.empty}>
+                <ActivityIndicator size="large" color="#818cf8" />
+                <Text style={[styles.emptyText, { marginTop: 12 }]}>Fetching live board...</Text>
+              </View>
+            ) : !filteredBoard || filteredBoard.trains.length === 0 ? (
               <View style={styles.empty}>
                 <Ionicons name="calendar-outline" size={40} color="#27272a" />
                 <Text style={styles.emptyText}>No trains scheduled</Text>

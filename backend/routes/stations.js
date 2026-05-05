@@ -109,13 +109,40 @@ const parseDelayDisplay = (display) => {
 // ─── ROUTES (Ordered correctly) ──────────────────────────────────────────────
 
 /**
+ * GET /api/stations (Alias for /all)
+ */
+router.get('/', async (req, res) => {
+  try {
+    const stations = await Station.find().sort({ stationName: 1 });
+    const formatted = stations.map(s => ({
+      ...s._doc,
+      coordinates: {
+        lat: s.location.coordinates[1],
+        lng: s.location.coordinates[0]
+      }
+    }));
+    res.json(formatted);
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+/**
  * GET /api/stations/all
  */
 router.get('/all', async (req, res) => {
   try {
     const stations = await Station.find().sort({ stationName: 1 });
     console.log(`[DB] Found ${stations.length} total stations`);
-    res.json(stations);
+    
+    // Map to consistent format for frontend
+    const formatted = stations.map(s => ({
+      ...s._doc,
+      coordinates: {
+        lat: s.location.coordinates[1],
+        lng: s.location.coordinates[0]
+      }
+    }));
+    
+    res.json(formatted);
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
