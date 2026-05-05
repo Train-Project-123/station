@@ -3,8 +3,8 @@
  * Live backend hosted on Render
  */
 
-const API_BASE_URL = 'https://station-wzhe.onrender.com';
-// const API_BASE_URL = 'http://192.168.1.4:5000';
+const API_BASE_URL = 'http://10.10.11.102:5000'; 
+// const API_BASE_URL = 'https://station-wzhe.onrender.com';
 
 /**
  * Fetch nearby stations from the backend
@@ -43,62 +43,19 @@ export async function fetchNearbyStations(lat, lng, radius = 5000) {
  * @param {string} stationCode - e.g. "KAKJ", "PGI"
  * @returns {Promise<{stationCode, totalTrains, trains: Array}>}
  */
-export async function fetchStationLiveBoard(stationCode) {
-  const apiKey = 'rr_as97u1l1wby7ueobdx3uc5cieea9b3sp';
-  const url = `https://api.railradar.org/api/v1/stations/${encodeURIComponent(stationCode)}/live?apiKey=${apiKey}&hours=2`;
+export async function fetchStationLiveBoard(stationCode, hours = 6) {
+  const url = `${API_BASE_URL}/api/stations/${encodeURIComponent(stationCode)}/live?hours=${hours}`;
 
   const response = await fetch(url, {
     method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
   });
 
   if (!response.ok) {
     throw new Error(`Live board API error: ${response.status} ${response.statusText}`);
   }
 
-  const data = await response.json();
-
-  // Map RailRadar structure to the format TrackingScreen expects
-  if (data.success && data.data && data.data.trains) {
-    const mappedTrains = data.data.trains.map(t => ({
-      trainNumber: t.train?.number,
-      trainName: t.train?.name,
-      toCode: t.train?.destinationStationCode,
-      fromCode: t.train?.sourceStationCode,
-      platform: t.platform,
-      scheduled: {
-        arrival: t.schedule?.arrival,
-        departure: t.schedule?.departure
-      },
-      delay: {
-        arrival: t.live?.arrivalDelayDisplay,
-        departure: t.live?.departureDelayDisplay
-      },
-      expected: {
-        // RailRadar provides delay durations in these fields usually
-        arrival: t.live?.arrivalDelayDisplay,
-        departure: t.live?.departureDelayDisplay
-      },
-      status: {
-        hasArrived: t.status?.hasArrived,
-        hasDeparted: t.status?.hasDeparted
-      }
-    }));
-
-    return {
-      success: true,
-      data: {
-        stationName: data.data.station?.name,
-        stationCode: data.data.station?.code,
-        totalTrains: data.data.totalTrains,
-        trains: mappedTrains
-      }
-    };
-  }
-
-  return data;
+  return response.json();
 }
 
 /**

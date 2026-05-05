@@ -58,8 +58,8 @@ mongoose.connection.on('disconnected', () => {
   connectDB();
 });
 
-app.listen(PORT, () => {
-  console.log(`[SERVER] 🚀 Running on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[SERVER] 🚀 Running on port ${PORT} (Network Accessible)`);
 });
 
 process.on('SIGINT', async () => {
