@@ -100,7 +100,7 @@ const StationDetailsModal = ({ isOpen, onClose, station, allStations }) => {
     }
   };
 
-  const renderTrainRow = (train) => {
+  const renderTrainRow = (train, category) => {
     const state = getTrainState(train);
     const resolvedDest = allStations.find(s =>
       s.stationCode?.toUpperCase().trim() === train.toCode?.toUpperCase().trim()
@@ -110,16 +110,32 @@ const StationDetailsModal = ({ isOpen, onClose, station, allStations }) => {
     const arrTime = fmt12h(train.expectedArrival || train.scheduledArrival);
     const delay = train.delayMinutes || 0;
 
-    const isAtStation = state === 'at_station';
-    const isDeparted = state === 'departed';
+    const isAtStation = category === 'AT_STATION';
+    const isApproaching = category === 'APPROACHING';
+    const isDeparted = category === 'GONE';
 
     return (
       <View key={train.trainNumber} style={[styles.trainRow, isAtStation && styles.atStationRow, isDeparted && styles.departedRow]}>
         <View style={{ flex: 1 }}>
           <View style={styles.trainHeader}>
             <Text style={styles.trainNum}>{train.trainNumber}</Text>
-            <Text style={styles.trainName} numberOfLines={1}>{train.trainName}</Text>
+            <View style={[
+              styles.badge, 
+              isAtStation && { backgroundColor: '#4ade8022' },
+              isApproaching && { backgroundColor: '#3b82f622' },
+              isDeparted && { backgroundColor: '#27272a' }
+            ]}>
+              <Text style={[
+                styles.badgeText,
+                isAtStation && { color: '#4ade80' },
+                isApproaching && { color: '#3b82f6' },
+                isDeparted && { color: '#71717a' }
+              ]}>
+                {isAtStation ? 'AT STATION' : isApproaching ? 'APPROACHING' : isDeparted ? 'GONE' : 'UPCOMING'}
+              </Text>
+            </View>
           </View>
+          <Text style={styles.trainName} numberOfLines={1}>{train.trainName}</Text>
           <Text style={styles.destText}>to {resolvedDest}</Text>
         </View>
 
@@ -127,14 +143,14 @@ const StationDetailsModal = ({ isOpen, onClose, station, allStations }) => {
           <View style={styles.timeInfo}>
             {isAtStation ? (
               <Text style={styles.atStationText}>
-                {train.platform ? `Platform ${train.platform}` : 'At Platform'}
+                {train.platform ? `P${train.platform}` : 'At Platform'}
               </Text>
             ) : isDeparted ? (
               <Text style={styles.departedText}>Departed</Text>
             ) : (
-              <Text style={styles.upcomingTime}>{arrTime ? `Arrives ${arrTime}` : 'Upcoming'}</Text>
+              <Text style={styles.upcomingTime}>{arrTime || 'Upcoming'}</Text>
             )}
-            {!isDeparted && delay > 0 && <Text style={styles.delayText}>+{delay} min delay</Text>}
+            {!isDeparted && delay > 0 && <Text style={styles.delayText}>+{delay}m</Text>}
           </View>
           <TouchableOpacity style={styles.viewBtn} onPress={() => handleViewTrain(train)}>
             <Ionicons name="eye-outline" size={16} color="#fafafa" />
@@ -194,28 +210,28 @@ const StationDetailsModal = ({ isOpen, onClose, station, allStations }) => {
                 {filteredBoard.atStation?.length > 0 && (
                   <View style={styles.section}>
                     <Text style={[styles.sectionTitle, { color: '#4ade80' }]}>At Station</Text>
-                    {filteredBoard.atStation.map(renderTrainRow)}
+                    {filteredBoard.atStation.map(t => renderTrainRow(t, 'AT_STATION'))}
                   </View>
                 )}
 
                 {filteredBoard.approaching?.length > 0 && (
                   <View style={styles.section}>
                     <Text style={[styles.sectionTitle, { color: '#3b82f6' }]}>Approaching</Text>
-                    {filteredBoard.approaching.map(renderTrainRow)}
+                    {filteredBoard.approaching.map(t => renderTrainRow(t, 'APPROACHING'))}
                   </View>
                 )}
 
                 {filteredBoard.upcoming?.length > 0 && (
                   <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Upcoming</Text>
-                    {filteredBoard.upcoming.map(renderTrainRow)}
+                    {filteredBoard.upcoming.map(t => renderTrainRow(t, 'UPCOMING'))}
                   </View>
                 )}
 
                 {filteredBoard.gone?.length > 0 && (
                   <View style={styles.section}>
                     <Text style={[styles.sectionTitle, { color: '#71717a' }]}>Departed</Text>
-                    {filteredBoard.gone.map(renderTrainRow)}
+                    {filteredBoard.gone.map(t => renderTrainRow(t, 'GONE'))}
                   </View>
                 )}
               </>
@@ -297,6 +313,8 @@ const styles = StyleSheet.create({
   departedText: { color: '#71717a', fontSize: 14, fontWeight: '600' },
   delayText: { color: '#fb923c', fontSize: 10, fontWeight: '700', marginTop: 2 },
   viewBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#27272a', alignItems: 'center', justifyContent: 'center' },
+  badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, backgroundColor: '#1e1b4b' },
+  badgeText: { fontSize: 9, fontWeight: '900', color: '#818cf8' },
   empty: { padding: 60, alignItems: 'center', gap: 12 },
   emptyText: { color: '#3f3f46', fontSize: 14, fontWeight: '600' }
 });
