@@ -269,7 +269,7 @@ const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast
             </View>
           ) : (
             <View style={styles.list}>
-              {allStations.length === 0 ? (
+              {(allStations || []).length === 0 ? (
                 <View style={styles.emptyState}>
                   <Ionicons name="search-outline" size={40} color="#27272a" />
                   <Text style={styles.emptyText}>No stations found in directory</Text>

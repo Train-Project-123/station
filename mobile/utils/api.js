@@ -6,181 +6,108 @@
 export const API_BASE_URL = 'http://10.10.11.102:5000'; 
 // const API_BASE_URL = 'https://station-wzhe.onrender.com';
 
+const API_TIMEOUT = 8000; // 8 seconds
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), API_TIMEOUT);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 /**
  * Fetch nearby stations from the backend
- * @param {number} lat
- * @param {number} lng
- * @param {number} radius - in meters (default 5000 = 5km)
- * @returns {Promise<{stations: Array, userLocation: Object, count: number}>}
  */
 export async function fetchNearbyStations(lat, lng, radius = 5000) {
   const url = `${API_BASE_URL}/api/stations/nearby?lat=${lat}&lng=${lng}&radius=${radius}`;
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status} ${response.statusText}`);
-  }
-
-  const data = await response.json();
-
-  if (!data.success) {
-    throw new Error(data.message || 'Unknown API error');
-  }
-
-  return data;
-}
-
-/**
- * Fetch live station board — trains arriving/departing in the next 2 hours.
- * Calls: GET /api/stations/:code/live
- *
- * @param {string} stationCode - e.g. "KAKJ", "PGI"
- * @returns {Promise<{stationCode, totalTrains, trains: Array}>}
- */
-export async function fetchStationLiveBoard(stationCode, hours = 6) {
-  const url = `${API_BASE_URL}/api/stations/${encodeURIComponent(stationCode)}/live?hours=${hours}`;
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Live board API error: ${response.status} ${response.statusText}`);
-  }
-
+  const response = await fetchWithTimeout(url);
   return response.json();
 }
 
 /**
- * Health check
+ * Fetch station live board (trains currently at or approaching)
  */
-export async function healthCheck() {
-  const response = await fetch(`${API_BASE_URL}/health`);
+export async function fetchStationLiveBoard(stationCode) {
+  const url = `${API_BASE_URL}/api/stations/${stationCode}/live`;
+  const response = await fetchWithTimeout(url);
+  if (!response.ok) {
+    throw new Error(`Live board error: ${response.status}`);
+  }
   return response.json();
+}
+
+/**
+ * Fetch all stations in directory
+ */
+export async function fetchAllStations() {
+  try {
+    const url = `${API_BASE_URL}/api/stations/all`;
+    const response = await fetchWithTimeout(url);
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`[API] fetchAllStations failed (${response.status}):`, text);
+      throw new Error(`Server error ${response.status}`);
+    }
+    return response.json();
+  } catch (err) {
+    console.error('[API] Network error in fetchAllStations:', err.message);
+    throw err;
+  }
 }
 
 /**
  * Match train based on user locations
- * @param {Array<{lat, lng, speed, timestamp}>} locations 
  */
-export async function matchTrain(locations) {
-
+export async function matchTrain(locations, stationCode) {
   const url = `${API_BASE_URL}/api/trains/match`;
-
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ locations }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ locations, stationCode }),
   });
-
-  if (!response.ok) {
-    throw new Error(`Match API error: ${response.status} ${response.statusText}`);
-  }
-
   return response.json();
 }
 
 /**
- * Save a journey to the cloud history
+ * Verify admin passcode
  */
-export async function syncTripWithCloud(trip) {
-  const url = `${API_BASE_URL}/api/history`;
-
-  const response = await fetch(url, {
+export async function verifyAdminPasscode(passcode) {
+  const url = `${API_BASE_URL}/api/stations/verify-admin`;
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(trip),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ passcode }),
   });
-
-  if (!response.ok) {
-    throw new Error('Cloud sync failed');
-  }
-
   return response.json();
 }
 
 /**
- * Fetch all journeys from cloud history
- */
-export async function fetchCloudHistory() {
-  const url = `${API_BASE_URL}/api/history`;
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to fetch cloud history');
-  }
-
-  return response.json();
-}
-
-/**
- * Add a new station manually (Admin)
+ * Add a new station
  */
 export async function addStation(stationData) {
   const url = `${API_BASE_URL}/api/stations`;
-
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(stationData),
   });
-
   return response.json();
 }
-/**
- * Fetch all stations from the database
- */
-export async function fetchAllStations() {
-  const url = `${API_BASE_URL}/api/stations`;
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to fetch stations');
-  }
-
-  const data = await response.json();
-  return data.stations || [];
-}
 
 /**
- * Update an existing station
+ * Update a station
  */
 export async function updateStation(id, stationData) {
   const url = `${API_BASE_URL}/api/stations/${id}`;
-
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(stationData),
   });
-
   return response.json();
 }
 
@@ -189,53 +116,31 @@ export async function updateStation(id, stationData) {
  */
 export async function deleteStation(id) {
   const url = `${API_BASE_URL}/api/stations/${id}`;
-
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'DELETE',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
   });
-
   return response.json();
 }
 
 /**
- * Verify admin passcode with the backend
- */
-export async function verifyAdminPasscode(passcode) {
-  const url = `${API_BASE_URL}/api/stations/verify-admin`;
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ passcode }),
-  });
-
-  return response.json();
-}
-
-/**
- * Fetch full train details including route and live status
- * @param {string} trainNumber 
+ * Fetch full train details
  */
 export async function fetchTrainDetails(trainNumber) {
   const apiKey = 'rr_as97u1l1wby7ueobdx3uc5cieea9b3sp';
   const today = new Date().toISOString().split('T')[0];
   const url = `https://api.railradar.org/api/v1/trains/${encodeURIComponent(trainNumber)}?apiKey=${apiKey}&dataType=live&journeyDate=${today}`;
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Accept': 'application/json',
-    },
-  });
-
+  const response = await fetch(url); // External API, keep standard fetch
   if (!response.ok) {
-    throw new Error(`Train details API error: ${response.status}`);
+    throw new Error(`Train details error: ${response.status}`);
   }
+  return response.json();
+}
 
+/**
+ * Health check
+ */
+export async function healthCheck() {
+  const response = await fetchWithTimeout(`${API_BASE_URL}/health`);
   return response.json();
 }
