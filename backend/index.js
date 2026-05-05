@@ -1,4 +1,9 @@
-require('dotenv').config();
+const dotenvResult = require('dotenv').config();
+if (dotenvResult.error) {
+  console.error('[ENV] ❌ Failed to load .env file. Check if .env exists in backend root.');
+} else {
+  console.log('[ENV] ✅ .env file loaded successfully');
+}
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
