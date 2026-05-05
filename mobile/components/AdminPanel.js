@@ -43,8 +43,7 @@ const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast
       return;
     }
     setAdminLoading(true);
-    try {
-      const data = {
+    const data = {
         stationName: adminForm.name,
         stationCode: adminForm.code,
         zone: adminForm.zone || 'SR',
