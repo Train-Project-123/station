@@ -28,16 +28,18 @@ async function seed() {
     await mongoose.connect(MONGO_URI);
     console.log('[SEED] ✅ Connected to MongoDB');
 
-    // Clear existing stations to avoid duplicate key errors
-    await Station.deleteMany({});
-    console.log('[SEED] 🗑️  Cleared existing stations');
+    console.log('[SEED] ✅ Connected to MongoDB');
 
-    // Insert stations
-    const inserted = await Station.insertMany(stations);
-    console.log(`[SEED] 🌱 Inserted ${inserted.length} station(s):`);
-    inserted.forEach((s) => {
-      console.log(`       → ${s.stationName} (${s.stationCode}) @ [${s.location.coordinates}]`);
-    });
+    // Safe Seed: Use upsert instead of deleteMany to preserve user data
+    for (const s of stations) {
+      await Station.findOneAndUpdate(
+        { stationCode: s.stationCode },
+        s,
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    }
+    console.log(`[SEED] 🌱 Upserted ${stations.length} station(s)`);
+    console.log(`[SEED] 🌱 Upserted ${stations.length} station(s) successfully.`);
 
     // Verify 2dsphere index
     const indexes = await Station.collection.indexes();
