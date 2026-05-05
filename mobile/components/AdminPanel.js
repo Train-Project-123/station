@@ -12,7 +12,7 @@ import {
   Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { addStation, updateStation, deleteStation, fetchStationLiveBoard } from '../utils/api';
+import { addStation, updateStation, deleteStation, fetchStationLiveBoard, fetchStationInfo } from '../utils/api';
 
 const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast, onViewStation }) => {
   const [drawerTab, setDrawerTab] = useState('add');
@@ -35,6 +35,35 @@ const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast
         .finally(() => setLiveLoading(false));
     }
   }, [drawerTab, viewingStation]);
++
++  const handleAutoFetch = async () => {
++    if (!adminForm.code || adminForm.code.length < 2) {
++      if (showToast) showToast('Enter a station code first', 'warning');
++      return;
++    }
++    setAdminLoading(true);
++    try {
++      const res = await fetchStationInfo(adminForm.code);
++      if (res.success && res.data) {
++        const d = res.data;
++        setAdminForm({
++          name: d.stationName || '',
++          code: d.stationCode || adminForm.code,
++          zone: d.zone || 'SR',
++          state: d.state || 'Kerala',
++          lat: (d.latitude || '').toString(),
++          lng: (d.longitude || '').toString()
++        });
++        if (showToast) showToast('Details fetched!', 'success');
++      } else {
++        if (showToast) showToast('Station not found', 'error');
++      }
++    } catch (e) {
++      if (showToast) showToast('Fetch failed', 'error');
++    } finally {
++      setAdminLoading(false);
++    }
++  };
 
   const handleSave = async () => {
     if (!adminForm.name || !adminForm.code || !adminForm.lat || !adminForm.lng) {

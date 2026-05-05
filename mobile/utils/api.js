@@ -138,6 +138,18 @@ export async function fetchTrainDetails(trainNumber) {
 }
 
 /**
+ * Fetch station metadata from RailRadar (via backend)
+ */
+export async function fetchStationInfo(code) {
+  const url = `${API_BASE_URL}/api/stations/info/${code}`;
+  const response = await fetchWithTimeout(url);
+  if (!response.ok) {
+    throw new Error(`Fetch info failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+/**
  * Health check
  */
 export async function healthCheck() {

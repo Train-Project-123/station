@@ -177,24 +177,35 @@ router.get('/nearby', async (req, res) => {
 });
 
 /**
- * DEBUG: Test RailRadar API directly
+ * GET /api/stations/info/:code
+ * Fetch station metadata from RailRadar
  */
-router.get('/debug/railradar', async (req, res) => {
-  const { code, num } = req.query;
+router.get('/info/:code', async (req, res) => {
+  const code = req.params.code.toUpperCase();
   const apiKey = process.env.TRAIN_API;
-  const results = {};
+  const url = `https://api.railradar.org/api/v1/stations/${code}/info?apiKey=${apiKey}`;
+  
   try {
-    if (code) {
-      const sUrl = `https://api.railradar.org/api/v1/stations/${code.toUpperCase()}/live?hours=4&apiKey=${apiKey}`;
-      const sRes = await fetchWithTimeout(sUrl, { headers: { 'X-API-Key': apiKey } });
-      results.stationAPI = { url: sUrl, status: sRes.status, data: await sRes.json() };
-    }
-    if (num) {
-      const data = await fetchTrainLiveDetails(num, apiKey);
-      results.trainAPI = { data };
-    }
-    res.json({ success: true, results });
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    const response = await fetchWithTimeout(url);
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    const json = await response.json();
+    const data = json.data || json;
+    
+    // Format for frontend convenience
+    res.json({
+      success: true,
+      data: {
+        stationName: data.stationName || data.name,
+        stationCode: data.stationCode || data.code,
+        zone: data.zone || data.railwayZone,
+        state: data.state,
+        latitude: data.latitude || data.location?.lat,
+        longitude: data.longitude || data.location?.lng
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 /**
