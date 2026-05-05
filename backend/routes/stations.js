@@ -195,12 +195,12 @@ router.get('/info/:code', async (req, res) => {
     res.json({
       success: true,
       data: {
-        stationName: data.stationName || data.name,
-        stationCode: data.stationCode || data.code,
-        zone: data.zone || data.railwayZone,
-        state: data.state,
-        latitude: data.latitude || data.location?.lat,
-        longitude: data.longitude || data.location?.lng
+        stationName: data.name || data.stationName,
+        stationCode: data.code || data.stationCode,
+        zone: data.railwayZone || data.zone || 'SR',
+        state: data.state || 'Kerala',
+        latitude: data.lat || data.latitude || (data.location?.lat),
+        longitude: data.lng || data.longitude || (data.location?.lng)
       }
     });
   } catch (e) {
