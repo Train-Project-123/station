@@ -265,46 +265,6 @@ const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast
                 </TouchableOpacity>
               )}
             </View>
-          ) : drawerTab === 'view' ? (
-            <View style={{ padding: 20 }}>
-              <TouchableOpacity 
-                style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20, gap: 8 }}
-                onPress={() => setDrawerTab('list')}
-              >
-                <Ionicons name="arrow-back" size={20} color="#71717a" />
-                <Text style={{ color: '#71717a', fontSize: 14, fontWeight: '700' }}>Back to Directory</Text>
-              </TouchableOpacity>
-
-              {viewingStation && (
-                <View style={{ marginBottom: 20 }}>
-                  <Text style={{ color: '#fff', fontSize: 24, fontWeight: '900' }}>{viewingStation.stationName}</Text>
-                  <Text style={{ color: '#818cf8', fontSize: 14, fontWeight: '700' }}>{viewingStation.stationCode}</Text>
-                </View>
-              )}
-
-              {liveLoading ? (
-                <ActivityIndicator color="#818cf8" style={{ marginTop: 40 }} />
-              ) : liveData && liveData.trains?.length > 0 ? (
-                liveData.trains.map((t, idx) => (
-                  <View key={idx} style={styles.listItem}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.itemCode}>{t.trainNumber}</Text>
-                      <Text style={styles.itemName} numberOfLines={1}>{t.trainName || 'Express'}</Text>
-                      <Text style={{ color: '#71717a', fontSize: 12, marginTop: 4 }}>
-                        to {t.toCode} · {t.expectedArrival || t.scheduledArrival}
-                      </Text>
-                    </View>
-                    {t.delayMinutes > 0 && (
-                      <Text style={{ color: '#fb923c', fontSize: 11, fontWeight: '800' }}>+{t.delayMinutes}m</Text>
-                    )}
-                  </View>
-                ))
-              ) : (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyText}>No live trains found</Text>
-                </View>
-              )}
-            </View>
           ) : (
             <View style={styles.list}>
               {(allStations || []).length === 0 ? (
@@ -323,7 +283,7 @@ const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast
                     <View style={styles.itemActions}>
                       <TouchableOpacity 
                         style={[styles.actionBtn, { backgroundColor: '#18181b' }]} 
-                        onPress={() => { setViewingStation(s); setDrawerTab('view'); }}
+                        onPress={() => onViewStation(s)}
                       >
                         <Ionicons name="eye" size={18} color="#fafafa" />
                       </TouchableOpacity>
