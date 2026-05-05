@@ -14,7 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { addStation, updateStation, deleteStation } from '../utils/api';
 
-const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast }) => {
+const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast, onViewStation }) => {
   const [drawerTab, setDrawerTab] = useState('add');
   const [isEditMode, setIsEditMode] = useState(false);
   const [editingStationId, setEditingStationId] = useState(null);
@@ -211,6 +211,12 @@ const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast
                       <Text style={styles.itemMeta}>{s.zone} · {s.state}</Text>
                     </View>
                     <View style={styles.itemActions}>
+                      <TouchableOpacity 
+                        style={[styles.actionBtn, { backgroundColor: '#18181b' }]} 
+                        onPress={() => { onClose(); if (onViewStation) onViewStation(s); }}
+                      >
+                        <Ionicons name="eye" size={18} color="#fafafa" />
+                      </TouchableOpacity>
                       <TouchableOpacity style={styles.actionBtn} onPress={() => handleEdit(s)}>
                         <Ionicons name="pencil" size={18} color="#818cf8" />
                       </TouchableOpacity>

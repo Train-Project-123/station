@@ -214,6 +214,15 @@ export default function TrackingScreen() {
             </View>
 
             {isTracking && (
+              <TouchableOpacity 
+                style={{ position: 'absolute', top: 20, right: 20, backgroundColor: '#18181b', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#27272a', zIndex: 10, alignItems: 'center' }}
+                onPress={() => setActiveTab('speed')}
+              >
+                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '900' }}>{Math.round(speed || 0)}</Text>
+                <Text style={{ color: '#71717a', fontSize: 9, fontWeight: '700' }}>KM/H</Text>
+              </TouchableOpacity>
+            )}
+            {isTracking && (
               <View style={[styles.minimalCard, { alignItems: 'center', paddingVertical: 30 }]}>
                 <Text style={styles.minimalLabel}>CURRENT SPEED</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
@@ -297,12 +306,31 @@ export default function TrackingScreen() {
             </View>
           </View>
         )}
+        {activeTab === 'speed' && (
+          <View style={[styles.tabContent, { flex: 1, justifyContent: 'center', alignItems: 'center', minHeight: 400 }]}>
+            <View style={{ width: 220, height: 220, borderRadius: 110, borderWidth: 8, borderColor: '#1e1b4b', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0c0a09' }}>
+              <Text style={{ fontSize: 72, fontWeight: '900', color: '#fff' }}>{Math.round(speed || 0)}</Text>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: '#818cf8', letterSpacing: 2 }}>KM/H</Text>
+            </View>
+            <View style={{ marginTop: 40, alignItems: 'center' }}>
+              <Text style={{ color: '#71717a', fontSize: 14, fontWeight: '700', letterSpacing: 1 }}>{isTracking ? 'TRACKING ACTIVE' : 'TRACKING IDLE'}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, backgroundColor: '#18181b', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 100 }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: isTracking ? '#10b981' : '#ef4444' }} />
+                <Text style={{ color: isTracking ? '#10b981' : '#ef4444', fontSize: 12, fontWeight: '800' }}>{isTracking ? 'GPS SIGNAL OK' : 'GPS DISCONNECTED'}</Text>
+              </View>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       <View style={styles.bottomNav}>
         <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('track')}>
           <Ionicons name="location" size={22} color={activeTab === 'track' ? "#fafafa" : "#71717a"} />
           <Text style={[styles.navText, activeTab === 'track' && styles.navTextActive]}>Track</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('speed')}>
+          <Ionicons name="speedometer" size={22} color={activeTab === 'speed' ? "#fafafa" : "#71717a"} />
+          <Text style={[styles.navText, activeTab === 'speed' && styles.navTextActive]}>Speed</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('history')}>
           <Ionicons name="time" size={22} color={activeTab === 'history' ? "#fafafa" : "#71717a"} />
@@ -316,6 +344,10 @@ export default function TrackingScreen() {
         allStations={allStations} 
         onRefreshStations={loadAllStations} 
         showToast={showToast}
+        onViewStation={(s) => {
+          setViewingStation(s);
+          setIsViewModalOpen(true);
+        }}
       />
       <AdminAuthModal 
         isOpen={isAuthModalOpen} 
