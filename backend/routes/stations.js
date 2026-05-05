@@ -58,10 +58,18 @@ function addMinutesToTime(timeStr, delayMinutes) {
 //   trainNumber, route: [{ stationCode, scheduledArrival (unix), scheduledDeparture (unix),
 //     actualArrival (unix|null), actualDeparture (unix|null), delayArrivalMinutes, platform }]
 async function fetchTrainLiveDetails(trainNumber, apiKey) {
-  const today = new Date().toISOString().split('T')[0];
+  // RailRadar often prefers DD-MM-YYYY or YYYY-MM-DD. 
+  // Let's ensure we try both if one fails, or use a safer default.
+  const now = new Date();
+  const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
+  
   const url = `https://api.railradar.org/api/v1/trains/${encodeURIComponent(trainNumber)}?apiKey=${apiKey}&dataType=live&journeyDate=${today}`;
   const res = await fetch(url, {
-    headers: { 'X-API-Key': apiKey, Accept: 'application/json' },
+    headers: { 
+      'X-API-Key': apiKey, 
+      'Accept': 'application/json',
+      'User-Agent': 'RailRadar-Mobile'
+    },
   });
   if (!res.ok) throw new Error(`Train API ${res.status} for ${trainNumber}`);
   const json = await res.json();
@@ -210,7 +218,7 @@ router.get('/:code/live', async (req, res) => {
     let stationTrainsRaw = [];
     try {
       const liveRes = await fetch(
-        `${RAIL_RADAR_API}/api/v1/stations/${stationCode}/live?hours=${hours}`,
+        `${RAIL_RADAR_API}/api/v1/stations/${stationCode}/live?hours=${hours}&apiKey=${apiKey}`,
         { headers: { 'X-API-Key': apiKey, Accept: 'application/json' } }
       );
       if (liveRes.ok) {
@@ -244,9 +252,12 @@ router.get('/:code/live', async (req, res) => {
 
           const liveData = data.liveData || data;
           const route = liveData?.route || [];
-          const stopIndex = route.findIndex(s => s.stationCode?.toUpperCase().trim() === stationCode);
+          const stopIndex = route.findIndex(s => 
+            s.stationCode?.toUpperCase().trim() === stationCode.trim()
+          );
 
           if (stopIndex === -1) {
+            console.log(`[LIVE BOARD] ⚠️ Train ${num} route does not include ${stationCode}. Route: ${route.map(s => s.stationCode).join(',')}`);
             stationTrainCache.get(stationCode)?.delete(num);
             return null;
           }

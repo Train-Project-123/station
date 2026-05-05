@@ -41,22 +41,34 @@ const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast
         longitude: parseFloat(adminForm.lng)
       };
 
-      const res = isEditMode ? await updateStation(editingStationId, data) : await addStation(data);
-      if (res.success) {
-        if (showToast) showToast(isEditMode ? 'Updated!' : 'Added!', 'success');
-        setAdminForm({ name: '', code: '', zone: '', state: '', lat: '', lng: '' });
-        setIsEditMode(false);
-        setEditingStationId(null);
-        setDrawerTab('list');
-        onRefreshStations();
+      const saveAction = async () => {
+        try {
+          const res = isEditMode ? await updateStation(editingStationId, data) : await addStation(data);
+          if (res.success) {
+            if (showToast) showToast(isEditMode ? 'Updated!' : 'Added!', 'success');
+            setAdminForm({ name: '', code: '', zone: '', state: '', lat: '', lng: '' });
+            setIsEditMode(false);
+            setEditingStationId(null);
+            setDrawerTab('list');
+            onRefreshStations();
+          } else {
+            if (showToast) showToast(res.message || 'Failed', 'error');
+          }
+        } catch (e) {
+          if (showToast) showToast('Network error', 'error');
+        } finally {
+          setAdminLoading(false);
+        }
+      };
+
+      if (isEditMode) {
+        Alert.alert('Update Station', 'Confirm changes to this station?', [
+          { text: 'Cancel', style: 'cancel', onPress: () => setAdminLoading(false) },
+          { text: 'Update', style: 'default', onPress: saveAction }
+        ]);
       } else {
-        if (showToast) showToast(res.message || 'Failed', 'error');
+        await saveAction();
       }
-    } catch (e) {
-      if (showToast) showToast('Network error', 'error');
-    } finally {
-      setAdminLoading(false);
-    }
   };
 
   const handleEdit = (s) => {
@@ -106,7 +118,15 @@ const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast
             <Text style={styles.title}>ADMIN PANEL</Text>
             <Text style={styles.subtitle}>Station Directory Management</Text>
           </View>
-          <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+          <TouchableOpacity 
+            onPress={() => {
+              Alert.alert('Exit Admin', 'Are you sure you want to close Admin Panel?', [
+                { text: 'Stay', style: 'cancel' },
+                { text: 'Exit', style: 'destructive', onPress: onClose }
+              ]);
+            }} 
+            style={styles.closeBtn}
+          >
             <Ionicons name="close" size={24} color="#fafafa" />
           </TouchableOpacity>
         </View>
