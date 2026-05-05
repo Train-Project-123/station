@@ -3,7 +3,7 @@
  * Live backend hosted on Render
  */
 
-const API_BASE_URL = 'http://10.10.11.102:5000'; 
+export const API_BASE_URL = 'http://10.10.11.102:5000'; 
 // const API_BASE_URL = 'https://station-wzhe.onrender.com';
 
 /**

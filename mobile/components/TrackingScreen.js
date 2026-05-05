@@ -6,14 +6,15 @@ import {
   SafeAreaView,
   StatusBar,
   TouchableOpacity,
-  Platform,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 
 import { haversineDistance, formatDistance } from '../utils/haversine';
-import { fetchNearbyStations, fetchStationLiveBoard, fetchAllStations, verifyAdminPasscode, fetchTrainDetails } from '../utils/api';
+import { fetchNearbyStations, fetchStationLiveBoard, fetchAllStations, verifyAdminPasscode, fetchTrainDetails, API_BASE_URL } from '../utils/api';
 import { useTracking, TRACKING_STATUS } from '../hooks/useTracking';
 import { useLiveBoard } from '../hooks/useLiveBoard';
 import { useToast } from './Toast';
@@ -150,6 +151,8 @@ export default function TrackingScreen() {
 
   const loadAllStations = async () => {
     try {
+      const url = `${API_BASE_URL}/api/stations/all`;
+      console.log(`[STATIONS] Attempting fetch from: ${url}`);
       const stations = await fetchAllStations();
       console.log(`[STATIONS] Fetched ${stations.length} stations`);
       if (stations.length === 0) {
@@ -158,7 +161,7 @@ export default function TrackingScreen() {
       setAllStations(stations);
     } catch (err) {
       console.error('[STATIONS] Failed to load stations:', err);
-      Alert.alert('Error', 'Failed to load station directory. Check network.');
+      Alert.alert('Error', `Failed to load station directory: ${err.message}`);
     }
   };
 
