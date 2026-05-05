@@ -301,7 +301,7 @@ router.delete('/:id', async (req, res) => {
   } catch (e) { res.status(400).json({ success: false, error: e.message }); }
 });
 
-router.post('/verify-pass', async (req, res) => {
+router.post(['/verify-admin', '/verify-pass'], async (req, res) => {
   const { passcode } = req.body;
   const expected = (process.env.ADMIN_PASS || '3210').trim();
   const received = String(passcode || '').trim();
