@@ -3,59 +3,64 @@ const router = express.Router();
 const Station = require('../models/Station');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
-// ─── Per-Station Train Number Cache ──────────────────────────────────────────
-const stationTrainCache = new Map(); // stationCode → Set<trainNumber>
-const trainNameCache = new Map();    // trainNumber → trainName
+// ─── DEBUG: Test RailRadar API directly ───────────────────────────────────────
+router.get('/debug/railradar', async (req, res) => {
+  const { code, num } = req.query;
+  const apiKey = process.env.TRAIN_API;
+  const results = {};
 
-function mergeTrainNumbers(stationCode, newNumbers = []) {
+  try {
+    if (code) {
+      const sUrl = `https://api.railradar.org/api/v1/stations/${code.toUpperCase()}/live?hours=4&apiKey=${apiKey}`;
+      const sRes = await fetch(sUrl, { headers: { 'X-API-Key': apiKey, 'Accept': 'application/json' } });
+      results.stationAPI = { url: sUrl, status: sRes.status, data: await sRes.json() };
+    }
+    if (num) {
+      const tUrl = `https://api.railradar.org/api/v1/trains/${num}?apiKey=${apiKey}&dataType=live&journeyDate=${new Date().toISOString().split('T')[0]}`;
+      const tRes = await fetch(tUrl, { headers: { 'X-API-Key': apiKey, 'Accept': 'application/json' } });
+      results.trainAPI = { url: tUrl, status: tRes.status, data: await tRes.json() };
+    }
+    res.json({ success: true, results });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ─── Per-Station Train Number Cache ──────────────────────────────────────────
+const stationTrainCache = new Map(); // stationCode -> Set of trainNumbers
+const trainNameCache = new Map();    // trainNumber -> trainName
+const trainDetailCache = new Map(); // trainNumber -> { data, timestamp }
+const CACHE_TTL = 120000; // 2 minutes
+
+// ─── Helper: Merge live numbers into historical cache ───────────────────────
+function mergeTrainNumbers(stationCode, liveNumbers) {
   if (!stationTrainCache.has(stationCode)) {
     stationTrainCache.set(stationCode, new Set());
   }
   const cache = stationTrainCache.get(stationCode);
-  newNumbers.forEach(n => cache.add(n));
-  return Array.from(cache);
-}
-
-// ─── Helper: Unix timestamp → "HH:MM" IST string ─────────────────────────────
-// Train API returns scheduledArrival / actualArrival as Unix epoch seconds (IST)
-function tsToHHMM(unixSec) {
-  if (!unixSec) return null;
-  try {
-    const d = new Date(unixSec * 1000);
-    return d.toLocaleTimeString('en-GB', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone: 'Asia/Kolkata'
-    });
-  } catch (e) {
-    return null;
-  }
-}
-
-// ─── Helper: Parse Station API delay display → minutes number ─────────────────
-// Station API live.arrivalDelayDisplay = "On Time" | "02:49" | "0 min"
-function parseDelayDisplay(delayDisplay) {
-  if (!delayDisplay || delayDisplay === 'On Time' || delayDisplay === '0 min') return 0;
-  if (delayDisplay.includes(':')) {
-    const [h, m] = delayDisplay.split(':').map(Number);
-    return h * 60 + m;
-  }
-  return parseInt(delayDisplay) || 0;
-}
-
-// ─── Helper: Add minutes to an HH:MM time string ─────────────────────────────
-function addMinutesToTime(timeStr, delayMinutes) {
-  if (!timeStr || !timeStr.includes(':')) return timeStr;
-  if (!delayMinutes || delayMinutes <= 0) return timeStr;
-  const [h, m] = timeStr.split(':').map(Number);
-  const total = h * 60 + m + delayMinutes;
-  return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-}
-
-
-async function fetchTrainLiveDetails(trainNumber, apiKey) {
+  liveNumbers.forEach(num => cache.add(num));
   
+  // Cleanup: keep only 50 most recent per station
+  const arr = Array.from(cache);
+  if (arr.length > 50) {
+    const fresh = new Set(arr.slice(-50));
+    stationTrainCache.set(stationCode, fresh);
+    return arr.slice(-50);
+  }
+  return arr;
+}
+
+// ─── Helper: Cache management for train details ──────────────────────────────
+function getCachedTrainDetails(trainNumber) {
+  const cached = trainDetailCache.get(trainNumber);
+  if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+    return cached.data;
+  }
+  return null;
+}
+
+// ─── Helper: Fetch a single train's live details from RailRadar ───────────────
+async function fetchTrainLiveDetails(trainNumber, apiKey) {
   const now = new Date();
   const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
   
@@ -72,133 +77,60 @@ async function fetchTrainLiveDetails(trainNumber, apiKey) {
   return json.data || json;
 }
 
+// ─── Utilities ───────────────────────────────────────────────────────────────
+const tsToHHMM = (ts) => {
+  if (!ts) return null;
+  const d = new Date(ts * 1000);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+const addMinutesToTime = (timeStr, delayMinutes) => {
+  if (!timeStr || !timeStr.includes(':')) return timeStr;
+  const [h, m] = timeStr.split(':').map(Number);
+  const total = h * 60 + m + delayMinutes;
+  return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
+const parseDelayDisplay = (display) => {
+  if (!display) return 0;
+  const match = display.match(/(\d+)/);
+  return match ? parseInt(match[1]) : 0;
+};
+
+// ─── ROUTES ──────────────────────────────────────────────────────────────────
+
 /**
- * GET /api/stations
- * List all stations
+ * GET /api/stations/nearby
  */
-router.get('/', async (req, res) => {
+router.get('/nearby', async (req, res) => {
+  const { lat, lng, radius = 5000 } = req.query;
+  if (!lat || !lng) return res.status(400).json({ success: false, message: 'Missing coords' });
+
   try {
-    const stations = await Station.find({}).sort({ stationName: 1 });
-    return res.json({
+    const stations = await Station.find({
+      location: {
+        $near: {
+          $geometry: { type: 'Point', coordinates: [parseFloat(lng), parseFloat(lat)] },
+          $maxDistance: parseInt(radius)
+        }
+      }
+    });
+
+    res.json({
       success: true,
-      count: stations.length,
       stations: stations.map(s => ({
         _id: s._id,
         stationName: s.stationName,
         stationCode: s.stationCode,
         zone: s.zone,
-        division: s.division,
-        state: s.state,
-        coordinates: {
-          lat: s.location.coordinates[1],
-          lng: s.location.coordinates[0],
-        }
-      }))
+        coordinates: { lat: s.location.coordinates[1], lng: s.location.coordinates[0] }
+      })),
+      userLocation: { lat: parseFloat(lat), lng: parseFloat(lng) }
     });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: 'Server error.' });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
   }
 });
-
-/**
- * GET /api/stations/nearby
- * Query params: lat, lng, radius (in meters, default 5000m = 5km)
- *
- * Uses $nearSphere with GeoJSON format:
- *   coordinates: [longitude, latitude]
- */
-router.get('/nearby', async (req, res) => {
-  try {
-    const lat = parseFloat(req.query.lat);
-    const lng = parseFloat(req.query.lng);
-    const radius = parseFloat(req.query.radius) || 5000; // default 5km
-
-    if (isNaN(lat) || isNaN(lng)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid or missing lat/lng query parameters.',
-      });
-    }
-
-    // $nearSphere returns results sorted by distance (nearest first)
-    const stations = await Station.find({
-      location: {
-        $nearSphere: {
-          $geometry: {
-            type: 'Point',
-            coordinates: [lng, lat], // GeoJSON: [longitude, latitude]
-          },
-          $maxDistance: radius, // in meters
-        },
-      },
-    });
-
-    // Calculate distance for each station using Haversine
-    const results = stations.map((station) => {
-      const distance = haversineDistance(
-        lat,
-        lng,
-        station.location.coordinates[1], // latitude
-        station.location.coordinates[0]  // longitude
-      );
-      return {
-        _id: station._id,
-        stationName: station.stationName,
-        stationCode: station.stationCode,
-        zone: station.zone,
-        division: station.division,
-        state: station.state,
-        coordinates: {
-          lat: station.location.coordinates[1],
-          lng: station.location.coordinates[0],
-        },
-        distanceMeters: Math.round(distance),
-        isWithin500m: distance <= 500,
-      };
-    });
-
-    return res.json({
-      success: true,
-      count: results.length,
-      userLocation: { lat, lng },
-      searchRadius: radius,
-      stations: results,
-    });
-  } catch (error) {
-    console.error('[NEARBY STATIONS ERROR]', error.message);
-    return res.status(500).json({
-      success: false,
-      message: 'Server error while fetching nearby stations.',
-      error: error.message,
-    });
-  }
-});
-
-/**
- * GET /api/stations/:code/live
- *
- * ── Aggregator Strategy ──────────────────────────────────────────────────────
- * 1. Call Station API (hours=6) for a wide list of train numbers.
- * 2. Merge with in-memory cache so trains never disappear prematurely.
- * 3. For each train number, call the Train API and find this station in
- *    liveData.route — this is the SOURCE OF TRUTH.
- * 4. Categorize using actual timestamps, never hasArrived/hasDeparted flags:
- *      AT_STATION  → actualArrival exists  AND  actualDeparture is null
- *      UPCOMING    → actualArrival is null (sorted by expected arrival time)
- *      APPROACHING → UPCOMING train whose currentLocation is the prior stop
- *      GONE        → actualDeparture exists
- * 5. Return structured { atStation, upcoming, approaching, gone } JSON.
- * ────────────────────────────────────────────────────────────────────────────
- */
-// ─── Cache for Train API Results (2 min TTL) ──────────────────────────────────
-const trainDetailCache = new Map(); // trainNumber → { data, timestamp }
-const CACHE_TTL = 2 * 60 * 1000;
-
-function getCachedTrainDetails(num) {
-  const cached = trainDetailCache.get(num);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) return cached.data;
-  return null;
-}
 
 /**
  * GET /api/stations/:code/live
@@ -219,10 +151,14 @@ router.get('/:code/live', async (req, res) => {
       );
       if (liveRes.ok) {
         const liveJson = await liveRes.json();
-        stationTrainsRaw = (liveJson.data ?? liveJson).trains || [];
+        const root = liveJson.data || liveJson;
+        stationTrainsRaw = Array.isArray(root) ? root : (root.trains || []);
+        
         // Seed name cache
         stationTrainsRaw.forEach(e => {
-          if (e.train?.number && e.train?.name) trainNameCache.set(e.train.number, e.train.name);
+          const num = e.train?.number || e.trainNumber || e.number;
+          const name = e.train?.name || e.trainName || e.name;
+          if (num && name) trainNameCache.set(num, name);
         });
       }
     } catch (e) {
@@ -230,16 +166,15 @@ router.get('/:code/live', async (req, res) => {
     }
 
     // ── STEP 2: Merge with History Cache ─────────────────────────────────────
-    const rawNumbers = stationTrainsRaw.map(e => e.train?.number).filter(Boolean);
+    const rawNumbers = stationTrainsRaw.map(e => e.train?.number || e.trainNumber || e.number).filter(Boolean);
     const allNumbers = mergeTrainNumbers(stationCode, rawNumbers);
 
     // ── STEP 3: Enrich with Train API (Source of Truth) ──────────────────────
     const finalTrains = await Promise.all(
       allNumbers.slice(0, 30).map(async (num) => {
-        const stationMatch = stationTrainsRaw.find(t => t.train?.number === num);
+        const stationMatch = stationTrainsRaw.find(t => (t.train?.number || t.trainNumber || t.number) === num);
         
         try {
-          // Use cache or fetch
           let data = getCachedTrainDetails(num);
           if (!data) {
             data = await fetchTrainLiveDetails(num, apiKey);
@@ -253,15 +188,12 @@ router.get('/:code/live', async (req, res) => {
           );
 
           if (stopIndex === -1) {
-            console.log(`[LIVE BOARD] ⚠️ Train ${num} route does not include ${stationCode}. Route: ${route.map(s => s.stationCode).join(',')}`);
             stationTrainCache.get(stationCode)?.delete(num);
             return null;
           }
 
           const stop = route[stopIndex];
           const priorStop = stopIndex > 0 ? route[stopIndex - 1] : null;
-          
-          // GPS Location Resolution
           const currentStop = [...route].reverse().find(s => s.actualDeparture && s.stationCode?.toUpperCase() !== stationCode);
           const isApproaching = priorStop && currentStop && priorStop.stationCode?.toUpperCase() === currentStop.stationCode?.toUpperCase();
 
@@ -281,11 +213,9 @@ router.get('/:code/live', async (req, res) => {
               hasArrived: !!stop.actualArrival,
               hasDeparted: !!stop.actualDeparture
             },
-            // Metadata for tiered polling
             _category: stop.actualDeparture ? 'GONE' : (stop.actualArrival ? 'AT_STATION' : (isApproaching ? 'APPROACHING' : 'UPCOMING'))
           };
         } catch (e) {
-          // ── FALLBACK: Use Station API data if Train API fails ────────────────
           if (!stationMatch) return null;
           const delay = parseDelayDisplay(stationMatch.live?.arrivalDelayDisplay);
           return {
@@ -308,9 +238,9 @@ router.get('/:code/live', async (req, res) => {
     );
 
     const filtered = finalTrains.filter(Boolean);
-    
-    // ── STEP 4: Final Sorting ────────────────────────────────────────────────
-    const response = {
+    console.log(`[LIVE BOARD] Returning ${filtered.length} trains for station ${stationCode}`);
+
+    res.json({
       success: true,
       data: {
         station: { code: stationCode },
@@ -318,186 +248,58 @@ router.get('/:code/live', async (req, res) => {
         approaching: filtered.filter(t => t._category === 'APPROACHING'),
         upcoming: filtered.filter(t => t._category === 'UPCOMING'),
         gone: filtered.filter(t => t._category === 'GONE'),
-        trains: filtered // flat for legacy
+        trains: filtered 
       }
-    };
-
-    return res.json(response);
-
-  } catch (err) {
-    return res.status(500).json({ success: false, message: 'Aggregator failure' });
-  }
-});
-
-/**
- * GET /api/stations
- * Returns all stations in database
- */
-router.get('/', async (req, res) => {
-  try {
-    const stations = await Station.find({});
-    return res.json({
-      success: true,
-      count: stations.length,
-      stations,
     });
-  } catch (error) {
-    console.error('[GET ALL STATIONS ERROR]', error.message);
-    return res.status(500).json({ success: false, message: 'Server error.' });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
 /**
- * GET /api/stations/:code
- * Get station by code
- */
-router.get('/:code', async (req, res) => {
-  try {
-    const station = await Station.findOne({
-      stationCode: req.params.code.toUpperCase(),
-    });
-    if (!station) {
-      return res.status(404).json({ success: false, message: 'Station not found.' });
-    }
-    return res.json({ success: true, station });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: 'Server error.' });
-  }
-});
-
-/**
- * POST /api/stations
- * Add a new station
+ * Admin: Basic Station CRUD
  */
 router.post('/', async (req, res) => {
   try {
-    const { stationName, stationCode, zone, division, state, latitude, longitude } = req.body;
-
-    if (!stationName || !stationCode || !zone || !division || !state || latitude === undefined || longitude === undefined) {
-      return res.status(400).json({
-        success: false,
-        message: 'All fields are required: stationName, stationCode, zone, division, state, latitude, longitude.',
-      });
-    }
-
-    const newStation = new Station({
-      stationName,
-      stationCode: stationCode.toUpperCase(),
-      zone,
-      division,
-      state,
-      location: {
-        type: 'Point',
-        coordinates: [parseFloat(longitude), parseFloat(latitude)], // GeoJSON: [longitude, latitude]
-      },
+    const station = new Station({
+      ...req.body,
+      location: { type: 'Point', coordinates: [req.body.longitude, req.body.latitude] }
     });
-
-    await newStation.save();
-
-    return res.status(201).json({
-      success: true,
-      message: 'Station added successfully.',
-      station: newStation,
-    });
-  } catch (error) {
-    console.error('[ADD STATION ERROR]', error.message);
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Station code already exists.',
-      });
-    }
-    return res.status(500).json({
-      success: false,
-      message: 'Server error while adding station.',
-      error: error.message,
-    });
-  }
+    await station.save();
+    res.status(201).json({ success: true, station });
+  } catch (e) { res.status(400).json({ success: false, error: e.message }); }
 });
 
-/**
- * Haversine formula — returns distance in METERS between two lat/lng points
- */
-function haversineDistance(lat1, lng1, lat2, lng2) {
-  const R = 6371000; // Earth radius in meters
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) *
-    Math.cos(toRad(lat2)) *
-    Math.sin(dLng / 2) *
-    Math.sin(dLng / 2);
-
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
-function toRad(deg) {
-  return deg * (Math.PI / 180);
-}
-
-/**
- * PUT /api/stations/:id
- * Update an existing station
- */
 router.put('/:id', async (req, res) => {
   try {
-    const { stationName, stationCode, zone, division, state, latitude, longitude } = req.body;
-
-    const updateData = {
-      stationName,
-      stationCode: stationCode?.toUpperCase(),
-      zone,
-      division,
-      state,
-      location: {
-        type: 'Point',
-        coordinates: [parseFloat(longitude), parseFloat(latitude)]
-      }
-    };
-
-    const station = await Station.findByIdAndUpdate(req.params.id, updateData, { new: true });
-
-    if (!station) {
-      return res.status(404).json({ success: false, message: 'Station not found' });
-    }
-
-    res.json({ success: true, message: 'Station updated successfully', station });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Error updating station', error: error.message });
-  }
+    const station = await Station.findByIdAndUpdate(req.params.id, {
+      ...req.body,
+      location: { type: 'Point', coordinates: [req.body.longitude, req.body.latitude] }
+    }, { new: true });
+    res.json({ success: true, station });
+  } catch (e) { res.status(400).json({ success: false, error: e.message }); }
 });
 
-/**
- * DELETE /api/stations/:id
- * Delete a station
- */
 router.delete('/:id', async (req, res) => {
   try {
-    const station = await Station.findByIdAndDelete(req.params.id);
-    if (!station) {
-      return res.status(404).json({ success: false, message: 'Station not found' });
-    }
-    res.json({ success: true, message: 'Station deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Error deleting station', error: error.message });
-  }
+    await Station.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: 'Deleted' });
+  } catch (e) { res.status(400).json({ success: false, error: e.message }); }
 });
 
-/**
- * POST /api/stations/verify-admin
- * Verify admin passcode
- */
-router.post('/verify-admin', (req, res) => {
-  const { passcode } = req.body;
-  const adminPass = process.env.ADMIN_PASS || '1234';
+router.get('/all', async (req, res) => {
+  try {
+    const stations = await Station.find().sort({ stationName: 1 });
+    res.json(stations);
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
 
-  if (passcode === adminPass) {
-    return res.json({ success: true, message: 'Authentication successful' });
+router.post('/verify-pass', async (req, res) => {
+  const { passcode } = req.body;
+  if (passcode === process.env.ADMIN_PASS) {
+    res.json({ success: true });
   } else {
-    return res.status(401).json({ success: false, message: 'Invalid passcode' });
+    res.status(401).json({ success: false, message: 'Invalid passcode' });
   }
 });
 

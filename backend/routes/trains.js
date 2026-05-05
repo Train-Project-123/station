@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Station = require('../models/Station');
 
-// Simple in-memory cache for live train data to prevent API rate limits
+
 const liveTrainCache = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
