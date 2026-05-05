@@ -304,7 +304,7 @@ router.delete('/:id', async (req, res) => {
 router.post('/verify-pass', async (req, res) => {
   const { passcode } = req.body;
   console.log(`[AUTH] Verifying passcode: ${passcode} against ${process.env.ADMIN_PASS}`);
-  if (String(passcode) === String(process.env.ADMIN_PASS)) {
+  if (String(passcode).trim() === String(process.env.ADMIN_PASS || '').trim()) {
     res.json({ success: true });
   } else {
     res.status(401).json({ success: false, message: 'Invalid passcode' });
