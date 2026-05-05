@@ -122,7 +122,9 @@ export default function TrackingScreen() {
       } else {
         setTrackingStatus(TRACKING_STATUS.OUTSIDE);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('[TRACKING] Location check failed:', e);
+    }
   };
 
   const handleAdminAuth = async () => {
@@ -139,6 +141,7 @@ export default function TrackingScreen() {
         setAuthError(true);
       }
     } catch (e) {
+      console.error('[AUTH] Admin verification failed:', e);
     } finally {
       setAuthLoading(false);
     }

@@ -114,6 +114,7 @@ const parseDelayDisplay = (display) => {
 router.get('/all', async (req, res) => {
   try {
     const stations = await Station.find().sort({ stationName: 1 });
+    console.log(`[DB] Found ${stations.length} total stations`);
     res.json(stations);
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
@@ -133,6 +134,7 @@ router.get('/nearby', async (req, res) => {
         }
       }
     });
+    console.log(`[DB] Found ${stations.length} nearby stations for [${lng}, ${lat}]`);
     res.json({
       success: true,
       stations: stations.map(s => ({
