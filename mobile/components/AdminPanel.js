@@ -194,15 +194,24 @@ const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast
         <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
           {drawerTab === 'add' ? (
             <View style={styles.form}>
-              <View style={styles.inputGroup}>
+              <View style={[styles.inputGroup, { marginBottom: 16 }]}>
                 <Text style={styles.label}>STATION CODE</Text>
-                <TextInput 
-                  style={styles.input} 
-                  placeholder="e.g. ERS" 
-                  placeholderTextColor="#3f3f46"
-                  value={adminForm.code}
-                  onChangeText={(v) => setAdminForm(p => ({ ...p, code: v.toUpperCase() }))}
-                />
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TextInput 
+                    style={[styles.input, { flex: 1 }]} 
+                    placeholder="e.g. ERS" 
+                    placeholderTextColor="#3f3f46"
+                    value={adminForm.code}
+                    onChangeText={(v) => setAdminForm(p => ({ ...p, code: v.toUpperCase() }))}
+                  />
+                  <TouchableOpacity 
+                    style={{ backgroundColor: '#18181b', paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, borderColor: '#27272a', justifyContent: 'center' }}
+                    onPress={handleAutoFetch}
+                    disabled={adminLoading}
+                  >
+                    <Ionicons name="cloud-download-outline" size={20} color="#818cf8" />
+                  </TouchableOpacity>
+                </View>
               </View>
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>STATION NAME</Text>
