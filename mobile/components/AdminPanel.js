@@ -270,17 +270,17 @@ const styles = StyleSheet.create({
     borderColor: '#27272a'
   },
   tabActive: { 
-    backgroundColor: '#3b82f6',
-    borderColor: '#60a5fa'
+    backgroundColor: '#1e1b4b',
+    borderColor: '#312e81'
   },
   tabText: { color: '#71717a', fontWeight: '700', fontSize: 13 },
-  tabTextActive: { color: '#fff' },
+  tabTextActive: { color: '#818cf8' },
   scroll: { flex: 1 },
   form: { padding: 24, gap: 20 },
   inputGroup: { gap: 8 },
   label: { color: '#71717a', fontSize: 11, fontWeight: '800', letterSpacing: 1 },
   input: { 
-    backgroundColor: '#18181b', 
+    backgroundColor: '#09090b', 
     color: '#fff', 
     padding: 14, 
     borderRadius: 12,
@@ -289,18 +289,15 @@ const styles = StyleSheet.create({
     fontSize: 15
   },
   saveBtn: { 
-    backgroundColor: '#3b82f6', 
+    backgroundColor: '#1e1b4b', 
     padding: 16, 
     borderRadius: 12, 
     alignItems: 'center',
     marginTop: 10,
-    shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4
+    borderWidth: 1,
+    borderColor: '#312e81'
   },
-  saveBtnText: { color: '#fff', fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1 },
+  saveBtnText: { color: '#818cf8', fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1 },
   cancelBtn: { padding: 12, alignItems: 'center' },
   cancelBtnText: { color: '#71717a', fontSize: 13, textDecorationLine: 'underline' },
   list: { padding: 16, gap: 12 },

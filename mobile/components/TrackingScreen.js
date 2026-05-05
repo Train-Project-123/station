@@ -213,6 +213,21 @@ export default function TrackingScreen() {
               </View>
             </View>
 
+            {isTracking && (
+              <View style={[styles.minimalCard, { alignItems: 'center', paddingVertical: 30 }]}>
+                <Text style={styles.minimalLabel}>CURRENT SPEED</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                  <Text style={{ fontSize: 64, fontWeight: '900', color: '#fff' }}>{Math.round(speed || 0)}</Text>
+                  <Text style={{ fontSize: 18, fontWeight: '700', color: '#71717a', marginLeft: 8 }}>KM/H</Text>
+                </View>
+                {speed > 20 && (
+                  <View style={{ backgroundColor: '#10b98122', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 100, marginTop: 10 }}>
+                    <Text style={{ color: '#10b981', fontSize: 12, fontWeight: '800' }}>DETECTING MOTION</Text>
+                  </View>
+                )}
+              </View>
+            )}
+
             {nearestStation && (
               <View style={styles.minimalCard}>
                 <View style={styles.minimalRow}>
@@ -230,7 +245,12 @@ export default function TrackingScreen() {
 
             {liveBoard && (
               <View style={styles.minimalCard}>
-                <Text style={styles.minimalLabel}>LIVE DEPARTURES</Text>
+                <View style={styles.minimalHeader}>
+                  <Text style={styles.minimalLabel}>LIVE DEPARTURES</Text>
+                  <TouchableOpacity onPress={() => refreshLiveBoard()}>
+                    <Ionicons name="refresh" size={14} color="#71717a" />
+                  </TouchableOpacity>
+                </View>
                 {liveBoard.trains.slice(0, 5).map((train, idx) => (
                   <View key={idx} style={styles.trainRowMinimal}>
                     <View style={styles.trainRowLeft}>
@@ -242,19 +262,19 @@ export default function TrackingScreen() {
                           </View>
                         )}
                       </View>
-                      <Text style={styles.trainDestText}>{train.toCode}</Text>
+                      <Text style={styles.trainDestText}>{train.toCode} · {train.expectedArrival || train.scheduledArrival}</Text>
                     </View>
                     <TouchableOpacity 
-                      style={styles.trainViewBtn} 
+                      style={[styles.trainViewBtn, { width: 44, height: 44, borderRadius: 12 }]} 
                       onPress={() => { setViewingTrain(train); setIsTrainModalOpen(true); }}
                     >
-                      <Ionicons name="eye-outline" size={16} color="#fafafa" />
+                      <Ionicons name="eye" size={20} color="#fff" />
                     </TouchableOpacity>
                   </View>
                 ))}
                 {liveBoard.trains.length > 5 && (
-                  <TouchableOpacity onPress={() => { setViewingStation(nearestStation); setIsViewModalOpen(true); }}>
-                    <Text style={styles.moreText}>See more</Text>
+                  <TouchableOpacity onPress={() => { setViewingStation(nearestStation); setIsViewModalOpen(true); }} style={{ marginTop: 10, alignItems: 'center' }}>
+                    <Text style={[styles.moreText, { color: '#818cf8', fontWeight: '700' }]}>See all trains</Text>
                   </TouchableOpacity>
                 )}
               </View>
