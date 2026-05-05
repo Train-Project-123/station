@@ -186,31 +186,28 @@ router.get('/nearby', async (req, res) => {
  * 5. Return structured { atStation, upcoming, approaching, gone } JSON.
  * ────────────────────────────────────────────────────────────────────────────
  */
+// ─── Cache for Train API Results (2 min TTL) ──────────────────────────────────
+const trainDetailCache = new Map(); // trainNumber → { data, timestamp }
+const CACHE_TTL = 2 * 60 * 1000;
+
+function getCachedTrainDetails(num) {
+  const cached = trainDetailCache.get(num);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) return cached.data;
+  return null;
+}
+
+/**
+ * GET /api/stations/:code/live
+ */
 router.get('/:code/live', async (req, res) => {
   const stationCode = req.params.code.toUpperCase();
   const RAIL_RADAR_API = 'https://api.railradar.org';
   const apiKey = process.env.TRAIN_API;
-  const hours = Math.min(parseInt(req.query.hours) || 4, 8); // Expanded window to 8 hours for better upcoming visibility
+  const hours = Math.min(parseInt(req.query.hours) || 4, 8);
 
   try {
-    // ── STEP 1: Station Info (metadata only, not for train classification) ────
-    let stationInfo = {};
-    try {
-      const infoRes = await fetch(
-        `${RAIL_RADAR_API}/api/v1/stations/${stationCode}/info?apiKey=${apiKey}`,
-        { headers: { 'X-API-Key': apiKey, Accept: 'application/json' } }
-      );
-      if (infoRes.ok) {
-        const infoJson = await infoRes.json();
-        stationInfo = infoJson.data || {};
-        console.log(`[LIVE BOARD] ✅ Station info fetched for ${stationCode}`);
-      }
-    } catch (e) {
-      console.warn(`[LIVE BOARD] ⚠️ Station info fetch failed: ${e.message}`);
-    }
-
-    // ── STEP 2: Station API — wide window (hours=6) to get train numbers ─────
-    let stationApiTrainNumbers = [];
+    // ── STEP 1: Fetch Station API (Wide Window) ──────────────────────────────
+    let stationTrainsRaw = [];
     try {
       const liveRes = await fetch(
         `${RAIL_RADAR_API}/api/v1/stations/${stationCode}/live?hours=${hours}`,
@@ -218,237 +215,110 @@ router.get('/:code/live', async (req, res) => {
       );
       if (liveRes.ok) {
         const liveJson = await liveRes.json();
-        const board = liveJson.data ?? liveJson;
-        const stationTrains = board.trains || [];
-        stationApiTrainNumbers = stationTrains.map(e => e.train?.number).filter(Boolean);
-        
-        // Carry over names from station board
-        stationTrains.forEach(e => {
-          if (e.train?.number && e.train?.name) {
-            trainNameCache.set(e.train.number, e.train.name);
-          }
+        stationTrainsRaw = (liveJson.data ?? liveJson).trains || [];
+        // Seed name cache
+        stationTrainsRaw.forEach(e => {
+          if (e.train?.number && e.train?.name) trainNameCache.set(e.train.number, e.train.name);
         });
-
-        console.log(`[LIVE BOARD] 🚉 Station API returned ${stationApiTrainNumbers.length} trains for ${stationCode}`);
       }
     } catch (e) {
-      console.warn(`[LIVE BOARD] ⚠️ Station API fetch failed: ${e.message}`);
+      console.warn(`[LIVE BOARD] Station API failure: ${e.message}`);
     }
 
-    // ── STEP 3: Merge with cache so already-seen trains aren't lost ───────────
-    const allTrainNumbers = mergeTrainNumbers(stationCode, stationApiTrainNumbers);
-    console.log(`[LIVE BOARD] 🔀 Merged train set: ${allTrainNumbers.length} trains (cache + fresh)`);
+    // ── STEP 2: Merge with History Cache ─────────────────────────────────────
+    const rawNumbers = stationTrainsRaw.map(e => e.train?.number).filter(Boolean);
+    const allNumbers = mergeTrainNumbers(stationCode, rawNumbers);
 
-    if (allTrainNumbers.length === 0) {
-      return res.json({
-        success: true,
-        data: {
-          station: { code: stationCode, name: stationInfo.name || '' },
-          summary: { atStation: 0, approaching: 0, upcoming: 0, gone: 0, totalResolved: 0 },
-          atStation: [],
-          approaching: [],
-          upcoming: [],
-          gone: [],
-          trains: []
+    // ── STEP 3: Enrich with Train API (Source of Truth) ──────────────────────
+    const finalTrains = await Promise.all(
+      allNumbers.slice(0, 30).map(async (num) => {
+        const stationMatch = stationTrainsRaw.find(t => t.train?.number === num);
+        
+        try {
+          // Use cache or fetch
+          let data = getCachedTrainDetails(num);
+          if (!data) {
+            data = await fetchTrainLiveDetails(num, apiKey);
+            trainDetailCache.set(num, { data, timestamp: Date.now() });
+          }
+
+          const liveData = data.liveData || data;
+          const route = liveData?.route || [];
+          const stopIndex = route.findIndex(s => s.stationCode?.toUpperCase().trim() === stationCode);
+
+          if (stopIndex === -1) {
+            stationTrainCache.get(stationCode)?.delete(num);
+            return null;
+          }
+
+          const stop = route[stopIndex];
+          const priorStop = stopIndex > 0 ? route[stopIndex - 1] : null;
+          
+          // GPS Location Resolution
+          const currentStop = [...route].reverse().find(s => s.actualDeparture && s.stationCode?.toUpperCase() !== stationCode);
+          const isApproaching = priorStop && currentStop && priorStop.stationCode?.toUpperCase() === currentStop.stationCode?.toUpperCase();
+
+          const schedArr = tsToHHMM(stop.scheduledArrival);
+          const delay = stop.delayArrivalMinutes || 0;
+
+          return {
+            trainNumber: num,
+            trainName: trainNameCache.get(num) || data.train?.name || 'Express',
+            toCode: data.train?.destinationStationCode || route[route.length-1]?.stationCode,
+            fromCode: data.train?.sourceStationCode || route[0]?.stationCode,
+            platform: stop.platform || stationMatch?.platform || null,
+            expectedArrival: addMinutesToTime(schedArr, delay) || schedArr,
+            delayMinutes: delay,
+            isApproaching,
+            status: {
+              hasArrived: !!stop.actualArrival,
+              hasDeparted: !!stop.actualDeparture
+            },
+            // Metadata for tiered polling
+            _category: stop.actualDeparture ? 'GONE' : (stop.actualArrival ? 'AT_STATION' : (isApproaching ? 'APPROACHING' : 'UPCOMING'))
+          };
+        } catch (e) {
+          // ── FALLBACK: Use Station API data if Train API fails ────────────────
+          if (!stationMatch) return null;
+          const delay = parseDelayDisplay(stationMatch.live?.arrivalDelayDisplay);
+          return {
+            trainNumber: num,
+            trainName: trainNameCache.get(num) || stationMatch.train?.name || 'Express',
+            toCode: stationMatch.toCode,
+            platform: stationMatch.platform,
+            expectedArrival: stationMatch.expectedArrival || stationMatch.scheduledArrival,
+            delayMinutes: delay,
+            isApproaching: false,
+            status: {
+              hasArrived: !!stationMatch.live?.hasArrived,
+              hasDeparted: !!stationMatch.live?.hasDeparted
+            },
+            _category: stationMatch.live?.hasDeparted ? 'GONE' : (stationMatch.live?.hasArrived ? 'AT_STATION' : 'UPCOMING'),
+            _isStale: true
+          };
         }
-      });
-    }
-
-    // ── STEP 4: Train API — SOURCE OF TRUTH for each train ───────────────────
-    // Cap parallel requests to avoid rate limiting (max 20 concurrent)
-    const CAP = 20;
-    const capped = allTrainNumbers.slice(0, CAP);
-
-    const trainResults = await Promise.allSettled(
-      capped.map(num => fetchTrainLiveDetails(num, apiKey))
+      })
     );
 
-    // ── STEP 5: Extract this station's stop from each train's route ───────────
-    const atStation   = [];
-    const upcoming    = [];
-    const approaching = [];
-    const gone        = [];
-
-    trainResults.forEach((result, i) => {
-      const trainNum = capped[i];
-
-      if (result.status === 'rejected') {
-        console.warn(`[LIVE BOARD] ⚠️ Train API failed for ${trainNum}: ${result.reason?.message}`);
-        return;
-      }
-
-      const data = result.value;
-      const liveData = data.liveData || data;
-      const route = liveData?.route || [];
-      const trainMeta = data.train || liveData?.train || data || {};
-      
-      // Smart Metadata: If API doesn't provide source/destination, get them from route
-      const sourceCode = trainMeta.sourceStationCode || trainMeta.source?.code || route[0]?.stationCode || null;
-      const destCode = trainMeta.destinationStationCode || trainMeta.destination?.code || route[route.length - 1]?.stationCode || null;
-
-      // Find the stop for our station in this train's route
-      const stopIndex = route.findIndex(
-        s => s.stationCode?.toUpperCase().trim() === stationCode
-      );
-
-      if (stopIndex === -1) {
-        // Train route doesn't pass through this station — evict from cache
-        stationTrainCache.get(stationCode)?.delete(trainNum);
-        return;
-      }
-
-      const stop = route[stopIndex];
-
-      // Current train GPS location = the last stop that has an actual departure
-      const currentStop = [...route]
-        .reverse()
-        .find(s => s.actualDeparture && s.stationCode?.toUpperCase() !== stationCode);
-
-      const currentLocationCode = currentStop?.stationCode || null;
-
-      // Prior stop (the stop just before our station in the route)
-      const priorStop = stopIndex > 0 ? route[stopIndex - 1] : null;
-      const isApproaching = (
-        priorStop &&
-        currentLocationCode &&
-        priorStop.stationCode?.toUpperCase() === currentLocationCode.toUpperCase()
-      );
-
-      const schedArrHHMM = tsToHHMM(stop.scheduledArrival);
-      const schedDepHHMM = tsToHHMM(stop.scheduledDeparture);
-      const delayMinutes = stop.delayArrivalMinutes || 0;
-      const expectedArrival = addMinutesToTime(schedArrHHMM, delayMinutes);
-
-      // Best accurate name detection (Prefer name from station board, then API info, then data fields)
-      const boardName = trainNameCache.get(trainNum);
-      const bestName = boardName || trainMeta.name || trainMeta.trainName || trainMeta.longName || data.trainName || data.name || 'Express';
-      
-      const trainEntry = {
-        trainNumber:     trainNum,
-        trainName:       bestName,
-        trainType:       trainMeta.type || trainMeta.trainType || null,
-        fromCode:        sourceCode,
-        toCode:          destCode,
-        platform:        stop.platform || null,
-        scheduledArrival:   schedArrHHMM,
-        scheduledDeparture: schedDepHHMM,
-        expectedArrival:    expectedArrival || schedArrHHMM,
-        actualArrival:      tsToHHMM(stop.actualArrival),
-        actualDeparture:    tsToHHMM(stop.actualDeparture),
-        // Nested objects for TrackingScreen.js getTrainState()
-        scheduled: {
-          arrival: schedArrHHMM,
-          departure: schedDepHHMM
-        },
-        expected: {
-          arrival: expectedArrival || schedArrHHMM,
-          departure: addMinutesToTime(schedDepHHMM, delayMinutes) || schedDepHHMM
-        },
-        delay: {
-          arrival: delayMinutes > 0 ? `${delayMinutes} min` : 'On Time',
-          departure: delayMinutes > 0 ? `${delayMinutes} min` : 'On Time'
-        },
-        // Status flags for getTrainState()
-        status: {
-          hasArrived: !!stop.actualArrival,
-          hasDeparted: !!stop.actualDeparture
-        },
-        detailedStatus: {
-          hasArrived: !!stop.actualArrival,
-          hasDeparted: !!stop.actualDeparture
-        },
-        // Raw timestamps for sorting
-        rawActualArrival:   stop.actualArrival,
-        rawActualDeparture: stop.actualDeparture,
-        delayMinutes:       delayMinutes,
-        currentLocation:    currentLocationCode,
-        isApproaching:      isApproaching,
-        isCancelled:        stop.isCancelled || false,
-        isDiverted:         stop.isDiverted || false,
-      };
-
-      // ── Classification using ACTUAL timestamps (never status flags) ─────────
-      if (stop.actualArrival && !stop.actualDeparture) {
-        atStation.push(trainEntry);
-      } else if (stop.actualDeparture) {
-        gone.push(trainEntry);
-      } else {
-        if (isApproaching) {
-          approaching.push(trainEntry);
-        } else {
-          upcoming.push(trainEntry);
-        }
-      }
-      
-      // DEBUG: Log categorization result
-      console.log(`[DEBUG CAT] Train ${trainNum}: ARR=${!!stop.actualArrival} DEP=${!!stop.actualDeparture} -> ${stop.actualArrival && !stop.actualDeparture ? 'AT' : stop.actualDeparture ? 'GONE' : 'UPCOMING'}`);
-    });
-
-    // Sort UPCOMING by expected arrival time (earliest first)
-    upcoming.sort((a, b) => (a.expectedArrival || '99:99').localeCompare(b.expectedArrival || '99:99'));
-    approaching.sort((a, b) => (a.expectedArrival || '99:99').localeCompare(b.expectedArrival || '99:99'));
-    // Sort GONE by actual departure time (most recent first) using raw timestamps
-    gone.sort((a, b) => (b.rawActualDeparture || 0) - (a.rawActualDeparture || 0));
-
-    const address = stationInfo.address || '';
-    const state = stationInfo.state || (address.includes(',') ? address.split(',').pop().trim() : null);
-
-    console.log(`[LIVE BOARD] ✅ ${stationCode}: AT=${atStation.length} APPROACHING=${approaching.length} UPCOMING=${upcoming.length} GONE=${gone.length}`);
-
-    return res.json({
+    const filtered = finalTrains.filter(Boolean);
+    
+    // ── STEP 4: Final Sorting ────────────────────────────────────────────────
+    const response = {
       success: true,
       data: {
-        station: {
-          code:        stationCode,
-          name:        stationInfo.name || '',
-          zone:        stationInfo.zone || null,
-          division:    stationInfo.division || null,
-          state:       state || null,
-          coordinates: stationInfo.lat
-            ? { lat: parseFloat(stationInfo.lat), lng: parseFloat(stationInfo.lng) }
-            : null,
-        },
-        summary: {
-          atStation:    atStation.length,
-          approaching:  approaching.length,
-          upcoming:     upcoming.length,
-          gone:         gone.length,
-          totalResolved: atStation.length + approaching.length + upcoming.length + gone.length,
-        },
-        atStation,
-        approaching,
-        upcoming,
-        gone,
-        // Legacy flat `trains` array for backwards compatibility with older mobile clients
-        trains: [...atStation, ...approaching, ...upcoming, ...gone],
-      },
-      meta: {
-        timestamp:        new Date().toISOString(),
-        service:          'TrainAPI_V2_Aggregator',
-        method:           'getLiveStationBoard',
-        stationApiCount:  stationApiTrainNumbers.length,
-        cachedCount:      allTrainNumbers.length - stationApiTrainNumbers.length,
-        resolvedCount:    atStation.length + approaching.length + upcoming.length + gone.length,
-        hoursWindow:      hours,
-        _strategy:        'train_api_source_of_truth',
-      },
-    });
+        station: { code: stationCode },
+        atStation: filtered.filter(t => t._category === 'AT_STATION'),
+        approaching: filtered.filter(t => t._category === 'APPROACHING'),
+        upcoming: filtered.filter(t => t._category === 'UPCOMING'),
+        gone: filtered.filter(t => t._category === 'GONE'),
+        trains: filtered // flat for legacy
+      }
+    };
+
+    return res.json(response);
 
   } catch (err) {
-    console.error('[LIVE BOARD] ❌ Aggregator error:', err.message);
-    return res.status(500).json({
-      success: false,
-      error: {
-        code:      'SERVER_ERROR',
-        message:   'Failed to aggregate live board data.',
-        statusCode: 500,
-        retryable: true,
-      },
-      meta: {
-        timestamp: new Date().toISOString(),
-        service:   'TrainAPI_V2_Aggregator',
-      },
-    });
+    return res.status(500).json({ success: false, message: 'Aggregator failure' });
   }
 });
 

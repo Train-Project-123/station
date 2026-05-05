@@ -38,13 +38,20 @@ const StationDetailsModal = ({ isOpen, onClose, station, liveBoard, allStations 
     return 'upcoming';
   };
 
-  const filteredTrains = useMemo(() => {
-    if (!liveBoard?.trains) return [];
-    return liveBoard.trains.filter(t => {
-      return !trainSearchQuery ||
-        t.trainNumber?.includes(trainSearchQuery) ||
-        t.toCode?.toLowerCase().includes(trainSearchQuery.toLowerCase());
-    });
+  const filteredBoard = useMemo(() => {
+    if (!liveBoard) return null;
+    const filterFn = (t) => !trainSearchQuery || 
+      t.trainNumber?.includes(trainSearchQuery) || 
+      t.toCode?.toLowerCase().includes(trainSearchQuery.toLowerCase());
+
+    return {
+      ...liveBoard,
+      atStation: liveBoard.atStation?.filter(filterFn) || [],
+      approaching: liveBoard.approaching?.filter(filterFn) || [],
+      upcoming: liveBoard.upcoming?.filter(filterFn) || [],
+      gone: liveBoard.gone?.filter(filterFn) || [],
+      trains: liveBoard.trains?.filter(filterFn) || []
+    };
   }, [liveBoard, trainSearchQuery]);
 
   const handleViewTrain = async (train) => {
@@ -135,31 +142,38 @@ const StationDetailsModal = ({ isOpen, onClose, station, liveBoard, allStations 
           </View>
 
           <ScrollView style={styles.scroll} contentContainerStyle={{ padding: 20 }}>
-            {filteredTrains.length === 0 ? (
+            {!filteredBoard || filteredBoard.trains.length === 0 ? (
               <View style={styles.empty}>
                 <Ionicons name="calendar-outline" size={40} color="#27272a" />
                 <Text style={styles.emptyText}>No trains scheduled</Text>
               </View>
             ) : (
               <>
-                {filteredTrains.filter(t => getTrainState(t) === 'at_station').length > 0 && (
+                {filteredBoard.atStation?.length > 0 && (
                   <View style={styles.section}>
                     <Text style={[styles.sectionTitle, { color: '#4ade80' }]}>At Station</Text>
-                    {filteredTrains.filter(t => getTrainState(t) === 'at_station').map(renderTrainRow)}
+                    {filteredBoard.atStation.map(renderTrainRow)}
                   </View>
                 )}
 
-                {filteredTrains.filter(t => getTrainState(t) === 'upcoming').length > 0 && (
+                {filteredBoard.approaching?.length > 0 && (
+                  <View style={styles.section}>
+                    <Text style={[styles.sectionTitle, { color: '#3b82f6' }]}>Approaching</Text>
+                    {filteredBoard.approaching.map(renderTrainRow)}
+                  </View>
+                )}
+
+                {filteredBoard.upcoming?.length > 0 && (
                   <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Upcoming</Text>
-                    {filteredTrains.filter(t => getTrainState(t) === 'upcoming').map(renderTrainRow)}
+                    {filteredBoard.upcoming.map(renderTrainRow)}
                   </View>
                 )}
 
-                {filteredTrains.filter(t => getTrainState(t) === 'departed').length > 0 && (
+                {filteredBoard.gone?.length > 0 && (
                   <View style={styles.section}>
                     <Text style={[styles.sectionTitle, { color: '#71717a' }]}>Departed</Text>
-                    {filteredTrains.filter(t => getTrainState(t) === 'departed').map(renderTrainRow)}
+                    {filteredBoard.gone.map(renderTrainRow)}
                   </View>
                 )}
               </>

@@ -346,7 +346,14 @@ export default function TrackingScreen() {
                 {liveBoard.trains.slice(0, 5).map((train, idx) => (
                   <View key={idx} style={styles.trainRowMinimal}>
                     <View style={styles.trainRowLeft}>
-                      <Text style={styles.trainNumText}>{train.trainNumber}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.trainNumText}>{train.trainNumber}</Text>
+                        {train.isApproaching && (
+                          <View style={{ backgroundColor: '#3b82f6', paddingHorizontal: 4, borderRadius: 4 }}>
+                            <Text style={{ color: '#fff', fontSize: 8, fontWeight: '800' }}>APP</Text>
+                          </View>
+                        )}
+                      </View>
                       <Text style={styles.trainDestText}>{train.toCode}</Text>
                     </View>
                     <TouchableOpacity style={styles.trainViewBtn} onPress={() => { setViewingTrain(train); setIsTrainModalOpen(true); }}>
