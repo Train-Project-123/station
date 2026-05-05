@@ -151,8 +151,15 @@ export default function TrackingScreen() {
   const loadAllStations = async () => {
     try {
       const stations = await fetchAllStations();
+      console.log(`[STATIONS] Fetched ${stations.length} stations`);
+      if (stations.length === 0) {
+        Alert.alert('Debug', 'Backend returned 0 stations. Check DB.');
+      }
       setAllStations(stations);
-    } catch (err) {}
+    } catch (err) {
+      console.error('[STATIONS] Failed to load stations:', err);
+      Alert.alert('Error', 'Failed to load station directory. Check network.');
+    }
   };
 
   useEffect(() => {
