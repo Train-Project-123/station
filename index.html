@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add Product | Classic Perfumes</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+    <header>
+        <nav>
+            <a href="#" class="nav-link active">Dash board</a>
+            <a href="#" class="nav-link">orders</a>
+            <a href="#" class="nav-link">products</a>
+            <a href="#" class="nav-link">sales report</a>
+            <a href="#" class="nav-link">customers</a>
+            <a href="#" class="nav-link">coupons</a>
+            <a href="#" class="nav-link">categories</a>
+            <a href="#" class="nav-link">refund/return</a>
+        </nav>
+        <div class="user-profile">
+            <i class="fa-regular fa-user"></i>
+        </div>
+    </header>
+
+    <div class="container">
+        <h1>Add Product</h1>
+
+        <div class="form-group">
+            <label>Product Name</label>
+            <input type="text" placeholder="Blue de chanel" id="productName">
+        </div>
+
+        <div class="form-group">
+            <label>Product Description</label>
+            <textarea placeholder="Write your description here..." id="productDesc"></textarea>
+        </div>
+
+        <div class="photo-section">
+            <label>Edit photos</label>
+            <div class="photo-grid">
+                <div class="upload-box">
+                    <i class="fa-regular fa-image"></i>
+                    <span>Add Image</span>
+                </div>
+                <div class="upload-box">
+                    <i class="fa-regular fa-image"></i>
+                    <span>Add Image</span>
+                </div>
+                <div class="upload-box">
+                    <i class="fa-regular fa-image"></i>
+                    <span>Add Image</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="variant-section">
+            <button class="add-variant-btn" id="addVariantBtn">add variant</button>
+            
+            <div class="variant-inputs">
+                <div class="form-group">
+                    <label>Base Price</label>
+                    <input type="number" id="basePrice" placeholder="₹ 300">
+                </div>
+                <div class="form-group">
+                    <label>Discount Price</label>
+                    <input type="number" id="discountPrice" placeholder="Enter discount price">
+                </div>
+                <div class="form-group">
+                    <label>Stock</label>
+                    <input type="number" id="stock" placeholder="Enter stock limit">
+                </div>
+                <div class="form-group">
+                    <label>category</label>
+                    <input type="text" id="vCategory" placeholder="category">
+                </div>
+                <div class="form-group">
+                    <label>size</label>
+                    <input type="text" id="vSize" placeholder="size">
+                </div>
+                <div class="form-group">
+                    <label>name</label>
+                    <input type="text" id="vName" placeholder="name">
+                </div>
+            </div>
+
+            <!-- Already Added Variants List -->
+            <div class="variant-list-container" id="variantListContainer">
+                <label>Added Variants</label>
+                <table class="variant-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Size</th>
+                            <th>Category</th>
+                            <th>Base Price</th>
+                            <th>Discount</th>
+                            <th>Stock</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="variantTableBody">
+                        <!-- Variants will be added here dynamically -->
+                        <tr>
+                            <td>Eau de Parfum</td>
+                            <td>100ml</td>
+                            <td>Premium</td>
+                            <td>₹ 5000</td>
+                            <td>₹ 4500</td>
+                            <td>50</td>
+                            <td>
+                                <div class="action-btns">
+                                    <button class="btn-icon btn-edit"><i class="fa-solid fa-pen-to-square"></i></button>
+                                    <button class="btn-icon btn-delete"><i class="fa-solid fa-trash"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="bottom-actions">
+            <button class="btn-cancel">Cancel</button>
+            <button class="btn-save">
+                <i class="fa-regular fa-floppy-disk"></i> Save
+            </button>
+        </div>
+    </div>
+
+    <footer>
+        @2026 Classic Perfumes. All rights reserved
+    </footer>
+
+    <script>
+        document.getElementById('addVariantBtn').addEventListener('click', function() {
+            const name = document.getElementById('vName').value;
+            const size = document.getElementById('vSize').value;
+            const category = document.getElementById('vCategory').value;
+            const basePrice = document.getElementById('basePrice').value;
+            const discountPrice = document.getElementById('discountPrice').value;
+            const stock = document.getElementById('stock').value;
+
+            if(!name || !basePrice) {
+                alert("Please enter at least Name and Base Price");
+                return;
+            }
+
+            const tbody = document.getElementById('variantTableBody');
+            const row = document.createElement('tr');
+            
+            row.innerHTML = `
+                <td>${name}</td>
+                <td>${size || '-'}</td>
+                <td>${category || '-'}</td>
+                <td>₹ ${basePrice}</td>
+                <td>₹ ${discountPrice || '0'}</td>
+                <td>${stock || '0'}</td>
+                <td>
+                    <div class="action-btns">
+                        <button class="btn-icon btn-edit"><i class="fa-solid fa-pen-to-square"></i></button>
+                        <button class="btn-icon btn-delete"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                </td>
+            `;
+
+            tbody.appendChild(row);
+
+            // Clear inputs
+            document.getElementById('vName').value = '';
+            document.getElementById('vSize').value = '';
+            document.getElementById('vCategory').value = '';
+            document.getElementById('basePrice').value = '';
+            document.getElementById('discountPrice').value = '';
+            document.getElementById('stock').value = '';
+
+            // Add delete functionality to the new button
+            row.querySelector('.btn-delete').addEventListener('click', function() {
+                row.remove();
+            });
+        });
+
+        // Initialize existing delete buttons
+        document.querySelectorAll('.btn-delete').forEach(btn => {
+            btn.addEventListener('click', function() {
+                this.closest('tr').remove();
+            });
+        });
+    </script>
+</body>
+</html>
