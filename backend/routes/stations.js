@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Station = require('../models/Station');
+const StationBoard = require('../models/StationBoard');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 // ─── CONFIG & CACHE ──────────────────────────────────────────────────────────
@@ -213,9 +214,42 @@ router.get('/info/:code', async (req, res) => {
  */
 router.get('/:code/live', async (req, res) => {
   const stationCode = req.params.code.toUpperCase();
+  
+  try {
+    const stationDoc = await Station.findOne({ stationCode });
+    if (stationDoc) {
+      const board = await StationBoard.findOne({ station_id: stationDoc._id });
+      if (board && (Date.now() - board.last_updated_at.getTime() < 5 * 60 * 1000)) {
+        const filtered = board.upcoming_trains.map(t => ({
+          trainNumber: t.train_code,
+          trainName: t.train_name,
+          toCode: t.to_code,
+          toName: t.to_name,
+          fromCode: t.from_code,
+          fromName: t.from_name,
+          platform: t.platform,
+          expectedArrival: t.expected_arrival_time ? tsToHHMM(t.expected_arrival_time.getTime() / 1000) : null,
+          delayMinutes: t.delay_minutes,
+          isApproaching: t.is_approaching,
+          status: { hasArrived: t.arrived_time != null, hasDeparted: t.is_departed },
+          _category: t.category
+        }));
+        return res.json({
+          success: true,
+          data: {
+            station: { code: stationCode },
+            atStation: filtered.filter(t => t._category === 'AT_STATION'),
+            approaching: filtered.filter(t => t._category === 'APPROACHING'),
+            upcoming: filtered.filter(t => t._category === 'UPCOMING'),
+            gone: filtered.filter(t => t._category === 'GONE'),
+            trains: filtered 
+          }
+        });
+      }
+    }
   const RAIL_RADAR_API = 'https://api.railradar.org';
   const apiKey = process.env.TRAIN_API;
-  const hours = Math.min(parseInt(req.query.hours) || 4, 8);
+  const hours = Math.min(parseInt(req.query.hours) || 8, 8);
 
   try {
     let stationTrainsRaw = [];
@@ -273,26 +307,34 @@ router.get('/:code/live', async (req, res) => {
           const destCode = data.train?.destinationStationCode || route[route.length-1]?.stationCode;
           const isTerminating = destCode?.toUpperCase().trim() === stationCode.trim();
 
-          let category = stop.actualDeparture ? 'GONE' : (stop.actualArrival ? 'AT_STATION' : (isApproaching ? 'APPROACHING' : 'UPCOMING'));
-          
-          // Fix Bug 4: Terminating trains move to GONE after arrival
-          if (category === 'AT_STATION' && isTerminating) {
-            category = 'GONE';
-          }
+            const sourceCode = data.train?.sourceStationCode || route[0]?.stationCode;
+            const sourceName = data.train?.sourceStationName || route[0]?.stationName;
+            const isStarting = sourceCode?.toUpperCase().trim() === stationCode.trim();
 
-          return {
-            trainNumber: num,
-            trainName: trainNameCache.get(num) || data.train?.name || 'Express',
-            toCode: destCode,
-            toName: data.train?.destinationStationName || route[route.length-1]?.stationName || destCode,
-            fromCode: data.train?.sourceStationCode || route[0]?.stationCode,
-            fromName: data.train?.sourceStationName || route[0]?.stationName,
+            let category = stop.actualDeparture ? 'GONE' : ((stop.actualArrival || isStarting) ? 'AT_STATION' : (isApproaching ? 'APPROACHING' : 'UPCOMING'));
+            
+            // Fix Bug 4: Terminating trains move to GONE after arrival
+            if (category === 'AT_STATION' && isTerminating) {
+              category = 'GONE';
+            }
+
+            return {
+              trainNumber: num,
+              trainName: trainNameCache.get(num) || data.train?.name || 'Express',
+              toCode: destCode,
+              toName: data.train?.destinationStationName || route[route.length-1]?.stationName || destCode,
+              fromCode: sourceCode,
+              fromName: sourceName,
             platform: stop.platform || stationMatch?.platform || null,
             expectedArrival: addMinutesToTime(schedArr, delay) || schedArr,
             delayMinutes: delay,
             isApproaching,
             status: { hasArrived: !!stop.actualArrival, hasDeparted: !!stop.actualDeparture },
-            _category: category
+            _category: category,
+            _scheduledDepartureTime: stop.scheduledDeparture ? new Date(stop.scheduledDeparture * 1000) : null,
+            _expectedArrivalTime: (stop.actualArrival || stop.expectedArrival || stop.scheduledArrival) ? new Date((stop.actualArrival || stop.expectedArrival || stop.scheduledArrival) * 1000) : null,
+            _arrivedTime: stop.actualArrival ? new Date(stop.actualArrival * 1000) : null,
+            _departedAt: stop.actualDeparture ? new Date(stop.actualDeparture * 1000) : null
           };
         } catch (e) {
           if (!stationMatch) return null;
@@ -300,7 +342,10 @@ router.get('/:code/live', async (req, res) => {
           const destCode = stationMatch.toCode || stationMatch.train?.destinationStationCode;
           const isTerminating = destCode?.toUpperCase().trim() === stationCode.trim();
           
-          let category = stationMatch.live?.hasDeparted ? 'GONE' : (stationMatch.live?.hasArrived ? 'AT_STATION' : 'UPCOMING');
+          const sourceCode = stationMatch.fromCode || stationMatch.train?.sourceStationCode;
+          const isStarting = sourceCode?.toUpperCase().trim() === stationCode.trim();
+          
+          let category = stationMatch.live?.hasDeparted ? 'GONE' : ((stationMatch.live?.hasArrived || isStarting) ? 'AT_STATION' : 'UPCOMING');
           if (category === 'AT_STATION' && isTerminating) category = 'GONE';
 
           return {
@@ -308,13 +353,19 @@ router.get('/:code/live', async (req, res) => {
             trainName: trainNameCache.get(num) || stationMatch.train?.name || 'Express',
             toCode: destCode,
             toName: stationMatch.toName || stationMatch.train?.destinationStationName || destCode,
+            fromCode: sourceCode,
+            fromName: stationMatch.fromName || stationMatch.train?.sourceStationName || sourceCode,
             platform: stationMatch.platform,
             expectedArrival: stationMatch.expectedArrival || stationMatch.scheduledArrival,
             delayMinutes: delay,
             isApproaching: false,
             status: { hasArrived: !!stationMatch.live?.hasArrived, hasDeparted: !!stationMatch.live?.hasDeparted },
             _category: category,
-            _isStale: true
+            _isStale: true,
+            _scheduledDepartureTime: null,
+            _expectedArrivalTime: null,
+            _arrivedTime: stationMatch.live?.hasArrived ? new Date() : null,
+            _departedAt: stationMatch.live?.hasDeparted ? new Date() : null
           };
         }
       }));
@@ -323,6 +374,32 @@ router.get('/:code/live', async (req, res) => {
     }
 
     const filtered = finalTrains.filter(Boolean);
+    
+    if (stationDoc) {
+      const upcoming_trains = filtered.map(t => ({
+        train_code: t.trainNumber,
+        train_name: t.trainName,
+        to_code: t.toCode,
+        to_name: t.toName,
+        from_code: t.fromCode,
+        from_name: t.fromName,
+        platform: t.platform,
+        delay_minutes: t.delayMinutes,
+        is_approaching: t.isApproaching,
+        category: t._category,
+        scheduled_departure_time: t._scheduledDepartureTime,
+        expected_arrival_time: t._expectedArrivalTime,
+        arrived_time: t._arrivedTime,
+        is_departed: !!t.status?.hasDeparted,
+        departed_at: t._departedAt
+      }));
+      await StationBoard.findOneAndUpdate(
+        { station_id: stationDoc._id },
+        { upcoming_trains, last_updated_at: new Date() },
+        { upsert: true, new: true }
+      );
+    }
+
     res.json({
       success: true,
       data: {

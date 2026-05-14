@@ -2,8 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Setting = require('../models/Setting');
 
-// GET /api/settings/:key
-// Get a setting by key
+
 router.get('/:key', async (req, res) => {
   try {
     const setting = await Setting.findOne({ key: req.params.key });
@@ -16,8 +15,7 @@ router.get('/:key', async (req, res) => {
   }
 });
 
-// PUT /api/settings/:key
-// Update or create a setting by key
+
 router.put('/:key', async (req, res) => {
   try {
     const { value } = req.body;

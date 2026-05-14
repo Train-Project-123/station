@@ -42,10 +42,10 @@ export const useTracking = () => {
 
     // Watch position for continuous speed and heading
     locationSubscription.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.High, distanceInterval: 10 },
+      { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 10 },
       (loc) => {
         setLocation(loc.coords);
-        setSpeed((loc.coords.speed || 0) * 3.6); // km/h
+        setSpeed(Math.max(0, loc.coords.speed || 0) * 3.6); // km/h
         setHeading(loc.coords.heading || 0);
       }
     );
@@ -55,9 +55,9 @@ export const useTracking = () => {
 
   const updateLocation = useCallback(async () => {
     try {
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.BestForNavigation });
       setLocation(loc.coords);
-      setSpeed((loc.coords.speed || 0) * 3.6);
+      setSpeed(Math.max(0, loc.coords.speed || 0) * 3.6);
       setHeading(loc.coords.heading || 0);
       return loc.coords;
     } catch (e) {

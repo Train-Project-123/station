@@ -86,13 +86,11 @@ export default function TrackingScreen() {
   const [trainDetailData, setTrainDetailData] = useState(null);
   const [trainDetailLoading, setTrainDetailLoading] = useState(false);
 
-  // Tracking Action Wrappers
   const handleStartTracking = async () => {
     const success = await startTracking();
     if (success) {
       showToast('Tracking started', 'success');
-      const coords = await updateLocation();
-      if (coords) performInitialCheck(coords);
+      await updateLocation();
     } else {
       showToast('Location permission denied', 'error');
     }
@@ -104,18 +102,19 @@ export default function TrackingScreen() {
     showToast('Tracking stopped', 'info');
   };
 
-  const performInitialCheck = async (coords) => {
-    try {
-      const res = await fetchNearbyStations(coords.latitude, coords.longitude, 5000);
-      const stations = res.stations || [];
-      
+  useEffect(() => {
+    if (isTracking && location && allStations && allStations.length > 0) {
       let nearest = null;
       let minDist = Infinity;
-      stations.forEach(s => {
-        const d = haversineDistance(coords.latitude, coords.longitude, s.coordinates?.lat, s.coordinates?.lng);
-        if (d < minDist) { minDist = d; nearest = s; }
+      allStations.forEach(s => {
+        const lat = s.coordinates?.lat || s.location?.coordinates?.[1];
+        const lng = s.coordinates?.lng || s.location?.coordinates?.[0];
+        if (lat && lng) {
+          const d = haversineDistance(location.latitude, location.longitude, lat, lng);
+          if (d < minDist) { minDist = d; nearest = s; }
+        }
       });
-
+      
       setNearestStation(nearest);
       setDistanceMeters(minDist);
       
@@ -124,10 +123,12 @@ export default function TrackingScreen() {
       } else {
         setTrackingStatus(TRACKING_STATUS.OUTSIDE);
       }
-    } catch (e) {
-      console.error('[TRACKING] Location check failed:', e);
     }
-  };
+  }, [location, isTracking, allStations, boundaryMeters, setDistanceMeters, setTrackingStatus]);
+
+
+
+
 
   const handleAdminAuth = async () => {
     if (!passcodeInput) return;
