@@ -12,9 +12,9 @@ import {
   Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { addStation, updateStation, deleteStation, fetchStationLiveBoard, fetchStationInfo } from '../utils/api';
+import { addStation, updateStation, deleteStation, fetchStationLiveBoard, fetchStationInfo, fetchSetting, updateSetting } from '../utils/api';
 
-const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast, onViewStation }) => {
+const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, onSettingsSaved, showToast, onViewStation }) => {
   const [drawerTab, setDrawerTab] = useState('add');
   const [isEditMode, setIsEditMode] = useState(false);
   const [editingStationId, setEditingStationId] = useState(null);
@@ -25,6 +25,22 @@ const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast
   const [viewingStation, setViewingStation] = useState(null);
   const [liveData, setLiveData] = useState(null);
   const [liveLoading, setLiveLoading] = useState(false);
+  const [trackingRadiusStr, setTrackingRadiusStr] = useState('800');
+  const [settingsLoading, setSettingsLoading] = useState(false);
+
+  React.useEffect(() => {
+    if (drawerTab === 'settings') {
+      setSettingsLoading(true);
+      fetchSetting('tracking_radius')
+        .then(res => {
+          if (res.success && res.data && res.data.value) {
+            setTrackingRadiusStr(res.data.value.toString());
+          }
+        })
+        .catch(() => {})
+        .finally(() => setSettingsLoading(false));
+    }
+  }, [drawerTab]);
 
   React.useEffect(() => {
     if (drawerTab === 'view' && viewingStation) {
@@ -151,6 +167,25 @@ const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast
     );
   };
 
+  const handleSaveSettings = async () => {
+    if (!trackingRadiusStr) return;
+    setSettingsLoading(true);
+    try {
+      const res = await updateSetting('tracking_radius', Number(trackingRadiusStr));
+      if (res.success) {
+        if (onSettingsSaved) onSettingsSaved();
+        Alert.alert('Success', 'Saved successfully');
+        if (showToast) showToast('Saved successfully', 'success');
+      } else {
+        if (showToast) showToast('Failed to update', 'error');
+      }
+    } catch (e) {
+      if (showToast) showToast('Network error', 'error');
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
   return (
     <Modal visible={isOpen} animationType="slide" transparent={false} onRequestClose={onClose}>
       <SafeAreaView style={styles.container}>
@@ -189,10 +224,41 @@ const AdminPanel = ({ isOpen, onClose, allStations, onRefreshStations, showToast
             <Ionicons name="list" size={18} color={drawerTab === 'list' ? "#fff" : "#71717a"} />
             <Text style={[styles.tabText, drawerTab === 'list' && styles.tabTextActive]}>Directory</Text>
           </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.tab, drawerTab === 'settings' && styles.tabActive]} 
+            onPress={() => setDrawerTab('settings')}
+          >
+            <Ionicons name="settings" size={18} color={drawerTab === 'settings' ? "#fff" : "#71717a"} />
+            <Text style={[styles.tabText, drawerTab === 'settings' && styles.tabTextActive]}>Settings</Text>
+          </TouchableOpacity>
         </View>
 
         <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
-          {drawerTab === 'add' ? (
+          {drawerTab === 'settings' ? (
+            <View style={styles.form}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>TRACKING RADIUS (METERS)</Text>
+                <TextInput 
+                  style={styles.input} 
+                  placeholder="e.g. 800" 
+                  placeholderTextColor="#3f3f46"
+                  keyboardType="numeric"
+                  value={trackingRadiusStr}
+                  onChangeText={setTrackingRadiusStr}
+                />
+                <Text style={{ color: '#71717a', fontSize: 11, marginTop: 4 }}>
+                  This sets the default distance threshold for auto-detecting a station arrival.
+                </Text>
+              </View>
+              <TouchableOpacity style={styles.saveBtn} onPress={handleSaveSettings} disabled={settingsLoading}>
+                {settingsLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.saveBtnText}>Save Settings</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          ) : drawerTab === 'add' ? (
             <View style={styles.form}>
               <View style={[styles.inputGroup, { marginBottom: 16 }]}>
                 <Text style={styles.label}>STATION CODE</Text>

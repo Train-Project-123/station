@@ -46,9 +46,9 @@ export function formatDistance(meters) {
 /**
  * Check if user is within threshold distance of a station
  * @param {number} distanceMeters
- * @param {number} thresholdMeters - default 500
+ * @param {number} thresholdMeters - default 800
  * @returns {boolean}
  */
-export function isWithinBoundary(distanceMeters, thresholdMeters = 500) {
+export function isWithinBoundary(distanceMeters, thresholdMeters = 800) {
   return distanceMeters <= thresholdMeters;
 }

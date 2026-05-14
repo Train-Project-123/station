@@ -3,7 +3,7 @@
  * Live backend hosted on Render
  */
 
-export const API_BASE_URL = 'http://10.10.11.102:5000'; 
+export const API_BASE_URL = 'http://10.10.11.17:5000'; 
 // const API_BASE_URL = 'https://station-wzhe.onrender.com';
 
 const API_TIMEOUT = 8000; // 8 seconds
@@ -154,5 +154,31 @@ export async function fetchStationInfo(code) {
  */
 export async function healthCheck() {
   const response = await fetchWithTimeout(`${API_BASE_URL}/health`);
+  return response.json();
+}
+
+/**
+ * Fetch a setting by key
+ */
+export async function fetchSetting(key) {
+  const url = `${API_BASE_URL}/api/settings/${key}`;
+  const response = await fetchWithTimeout(url);
+  if (!response.ok) {
+    if (response.status === 404) return { success: false, message: 'Not found' };
+    throw new Error(`Fetch setting error: ${response.status}`);
+  }
+  return response.json();
+}
+
+/**
+ * Update a setting by key
+ */
+export async function updateSetting(key, value) {
+  const url = `${API_BASE_URL}/api/settings/${key}`;
+  const response = await fetchWithTimeout(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
   return response.json();
 }

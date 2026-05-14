@@ -14,7 +14,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 
 import { haversineDistance, formatDistance } from '../utils/haversine';
-import { fetchNearbyStations, fetchStationLiveBoard, fetchAllStations, verifyAdminPasscode, fetchTrainDetails, API_BASE_URL } from '../utils/api';
+import { fetchNearbyStations, fetchStationLiveBoard, fetchAllStations, verifyAdminPasscode, fetchTrainDetails, fetchSetting, API_BASE_URL } from '../utils/api';
 import { useTracking, TRACKING_STATUS } from '../hooks/useTracking';
 import { useLiveBoard } from '../hooks/useLiveBoard';
 import { useToast } from './Toast';
@@ -26,7 +26,7 @@ import StationDetailsModal from './StationDetailsModal';
 import TrainDetailsModal from './TrainDetailsModal';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
-const BOUNDARY_METERS = 500;
+// Removed static BOUNDARY_METERS, fetching dynamically from backend
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
@@ -59,6 +59,7 @@ export default function TrackingScreen() {
   } = useTracking();
 
   const [nearestStation, setNearestStation] = useState(null);
+  const [boundaryMeters, setBoundaryMeters] = useState(800);
   
   const { 
     data: liveBoard,
@@ -118,7 +119,7 @@ export default function TrackingScreen() {
       setNearestStation(nearest);
       setDistanceMeters(minDist);
       
-      if (nearest && minDist < BOUNDARY_METERS) {
+      if (nearest && minDist < boundaryMeters) {
         setTrackingStatus(TRACKING_STATUS.INSIDE);
       } else {
         setTrackingStatus(TRACKING_STATUS.OUTSIDE);
@@ -176,6 +177,17 @@ export default function TrackingScreen() {
     }
   }, [isTrainModalOpen, viewingTrain]);
 
+  const loadSettings = async () => {
+    try {
+      const res = await fetchSetting('tracking_radius');
+      if (res.success && res.data && res.data.value) {
+        setBoundaryMeters(Number(res.data.value));
+      }
+    } catch (err) {
+      console.error('[SETTINGS] Failed to load tracking radius', err);
+    }
+  };
+
   useEffect(() => {
     const loadHistory = async () => {
       try {
@@ -183,6 +195,7 @@ export default function TrackingScreen() {
         if (stored) setTripHistory(JSON.parse(stored));
       } catch (err) {}
     };
+    loadSettings();
     loadHistory();
     loadAllStations();
   }, []);
@@ -190,7 +203,7 @@ export default function TrackingScreen() {
   const statusConfig = {
     [TRACKING_STATUS.IDLE]: { label: 'Not Tracking', dot: '#71717a' },
     [TRACKING_STATUS.LOADING]: { label: 'Getting Location...', dot: '#6366f1' },
-    [TRACKING_STATUS.INSIDE]: { label: 'Near Station ✓', dot: '#22c55e' },
+    [TRACKING_STATUS.INSIDE]: { label: 'You are inside', dot: '#22c55e' },
     [TRACKING_STATUS.OUTSIDE]: { label: 'Outside Boundary', dot: '#f59e0b' },
     [TRACKING_STATUS.ERROR]: { label: 'Location Error', dot: '#ef4444' },
   };
@@ -222,8 +235,8 @@ export default function TrackingScreen() {
                   {isTracking ? 'Stop Tracking' : 'Start Tracking'}
                 </Text>
               </TouchableOpacity>
-              <View style={styles.statusMinimalWrapper}>
-                <Text style={styles.statusMinimalText}>{sc.label}</Text>
+              <View style={[styles.statusMinimalWrapper, { borderColor: sc.dot + '40', backgroundColor: sc.dot + '15' }]}>
+                <Text style={[styles.statusMinimalText, { color: sc.dot }]}>{sc.label}</Text>
               </View>
             </View>
 
@@ -357,6 +370,7 @@ export default function TrackingScreen() {
         onClose={() => setIsDrawerOpen(false)} 
         allStations={allStations} 
         onRefreshStations={loadAllStations} 
+        onSettingsSaved={loadSettings}
         showToast={showToast}
         onViewStation={(s) => {
           setViewingStation(s);
