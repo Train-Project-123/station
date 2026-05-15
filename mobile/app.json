@@ -2,7 +2,7 @@
   "expo": {
     "name": "Thirakkundo",
     "slug": "railway-station-finder",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/Logo.png",
     "userInterfaceStyle": "dark",
@@ -21,7 +21,8 @@
     },
     "android": {
       "package": "com.trainproject.stationfinder",
-      "versionCode": 2,
+      "versionCode": 3,
+      "minSdkVersion": 24,
       "adaptiveIcon": {
         "foregroundImage": "./assets/Logo.png",
         "backgroundColor": "#09090b"
@@ -53,7 +54,7 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/bb837041-12c5-4b81-8793-3eac5ef144c2"
+      "url": "https://u.dev.dev/bb837041-12c5-4b81-8793-3eac5ef144c2"
     }
   }
 }

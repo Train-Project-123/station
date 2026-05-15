@@ -214,9 +214,12 @@ router.get('/info/:code', async (req, res) => {
  */
 router.get('/:code/live', async (req, res) => {
   const stationCode = req.params.code.toUpperCase();
-  
+
+  // Declare stationDoc here so both the cache block and live-API block can access it
+  let stationDoc = null;
+
   try {
-    const stationDoc = await Station.findOne({ stationCode });
+    stationDoc = await Station.findOne({ stationCode });
     if (stationDoc) {
       const board = await StationBoard.findOne({ station_id: stationDoc._id });
       if (board && (Date.now() - board.last_updated_at.getTime() < 5 * 60 * 1000)) {
@@ -415,7 +418,10 @@ router.get('/:code/live', async (req, res) => {
         trains: filtered 
       }
     });
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  } catch (e) {
+    console.error(`[LIVE BOARD] ❌ 500 error for ${stationCode}:`, e.message, e.stack?.split('\n')[1]);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Admin CRUD
