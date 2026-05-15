@@ -12,16 +12,16 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   }
   if (data) {
     const { locations } = data;
-    const location = locations[0]; 
+    const location = locations[0];
 
     if (location) {
       console.log('[BACKGROUND TASK] Got location, speed:', location.coords.speed);
-      
+
       if (location.coords.speed > 8.3) {
         try {
           const storedLocationsStr = await AsyncStorage.getItem('train_movement_locations');
           const storedLocations = storedLocationsStr ? JSON.parse(storedLocationsStr) : [];
-          
+
           storedLocations.push({
             lat: location.coords.latitude,
             lng: location.coords.longitude,
@@ -41,20 +41,30 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
           if (storedLocations.length >= 5) {
             const lastMatchTime = await AsyncStorage.getItem('last_train_match_time');
             const now = Date.now();
-            
+
             // Only try matching once every 5 minutes (300000 ms) to avoid spam
             if (!lastMatchTime || (now - parseInt(lastMatchTime)) > 300000) {
-              const matchResult = await matchTrain(storedLocations);
-              if (matchResult.success && matchResult.matchedTrain) {
-                console.log('[BACKGROUND TASK] 🚂 Matched Train:', matchResult.matchedTrain.trainName);
-                
-                // Store match result so UI can display it
+              // FIX: read stationCode that foreground stores when user enters boundary
+              const stationCode = await AsyncStorage.getItem('active_station_code');
+              if (!stationCode) {
+                console.warn('[BACKGROUND TASK] No active_station_code in storage, skipping match.');
+                return;
+              }
+
+              // FIX: pass stationCode — backend /api/trains/match requires it (missing caused 400)
+              const matchResult = await matchTrain(storedLocations, stationCode);
+
+              // FIX: backend returns { success, match: {...} }, NOT matchedTrain
+              if (matchResult.success && matchResult.match) {
+                console.log('[BACKGROUND TASK] 🚂 Matched Train:', matchResult.match.trainName);
+
+                // Store result so foreground UI can show the confirmation modal
                 await AsyncStorage.setItem('matched_train_result', JSON.stringify({
-                  train: matchResult.matchedTrain,
-                  departureStation: matchResult.departureStation,
-                  timestamp: new Date().toISOString()
+                  train: matchResult.match,
+                  departureStation: stationCode,
+                  timestamp: new Date().toISOString(),
                 }));
-                
+
                 await AsyncStorage.setItem('last_train_match_time', now.toString());
               }
             }

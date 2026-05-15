@@ -28,7 +28,7 @@ async function getLiveBoardCached(stationCode, apiKey) {
 
   try {
     // 🔴 FIX: Added missing apiKey to query param
-    const url = `${RAIL_RADAR_API}/api/v1/stations/${stationCode}/live?hours=4&apiKey=${apiKey}`;
+    const url = `${RAIL_RADAR_API}/api/v1/stations/${stationCode}/live?hours=8&apiKey=${apiKey}`;
     const res = await fetchWithTimeout(url, {
       headers: { 'X-API-Key': apiKey, 'Accept': 'application/json' }
     });

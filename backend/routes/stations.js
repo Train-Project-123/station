@@ -247,6 +247,10 @@ router.get('/:code/live', async (req, res) => {
         });
       }
     }
+  } catch (cacheErr) {
+    console.warn('[LIVE BOARD] Cache read error, falling through to live API:', cacheErr.message);
+  }
+
   const RAIL_RADAR_API = 'https://api.railradar.org';
   const apiKey = process.env.TRAIN_API;
   const hours = Math.min(parseInt(req.query.hours) || 8, 8);

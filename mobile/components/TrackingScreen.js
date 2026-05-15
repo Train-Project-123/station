@@ -7,7 +7,8 @@ import {
   StatusBar,
   TouchableOpacity,
   ActivityIndicator,
-  Alert
+  Alert,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -43,32 +44,40 @@ const fmt12h = (timeStr) => {
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function TrackingScreen() {
   const { showToast } = useToast();
-  
+
   // Logic Hooks
-  const { 
-    isTracking, 
+  const {
+    isTracking,
     trackingStatus,
     setTrackingStatus,
     distanceMeters,
     setDistanceMeters,
     location,
     speed,
-    startTracking, 
+    startTracking,
     stopTracking,
-    updateLocation
+    updateLocation,
+    checkBoarding,
+    setActiveStationCode,
   } = useTracking();
 
   const [nearestStation, setNearestStation] = useState(null);
   const [boundaryMeters, setBoundaryMeters] = useState(800);
-  
-  const { 
+
+  const {
     data: liveBoard,
     loading: liveBoardLoading,
-    refresh: refreshLiveBoard 
+    refresh: refreshLiveBoard
   } = useLiveBoard(nearestStation?.stationCode);
 
-  const [activeTab, setActiveTab] = useState('track'); 
+  const [activeTab, setActiveTab] = useState('track');
   const [tripHistory, setTripHistory] = useState([]);
+
+  // ── Matched-train confirmation modal state ─────────────────────────────────
+  const [pendingMatch, setPendingMatch] = useState(null); // { train, departureStation, timestamp }
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  // Track which timestamps we've already shown a prompt for so we don't re-show
+  const shownMatchRef = useRef(null);
 
   // Modals & Admin State
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -99,9 +108,12 @@ export default function TrackingScreen() {
   const handleStopTracking = () => {
     stopTracking();
     setNearestStation(null);
+    setPendingMatch(null);
+    setIsConfirmModalOpen(false);
     showToast('Tracking stopped', 'info');
   };
 
+  // ── Station boundary detection + stationCode persistence ──────────────────
   useEffect(() => {
     if (isTracking && location && allStations && allStations.length > 0) {
       let nearest = null;
@@ -114,21 +126,106 @@ export default function TrackingScreen() {
           if (d < minDist) { minDist = d; nearest = s; }
         }
       });
-      
+
       setNearestStation(nearest);
       setDistanceMeters(minDist);
-      
+
       if (nearest && minDist < boundaryMeters) {
         setTrackingStatus(TRACKING_STATUS.INSIDE);
+        // Persist so background task can include stationCode in matchTrain()
+        setActiveStationCode(nearest.stationCode);
       } else {
         setTrackingStatus(TRACKING_STATUS.OUTSIDE);
+        setActiveStationCode(null); // user left the station area
       }
     }
-  }, [location, isTracking, allStations, boundaryMeters, setDistanceMeters, setTrackingStatus]);
+  }, [location, isTracking, allStations, boundaryMeters, setDistanceMeters, setTrackingStatus, setActiveStationCode]);
 
+  // ── Foreground boarding detection (speed > 20 km/h while inside station) ──
+  useEffect(() => {
+    if (
+      isTracking &&
+      trackingStatus === TRACKING_STATUS.INSIDE &&
+      speed > 20 &&
+      liveBoard?.trains
+    ) {
+      const match = checkBoarding(liveBoard.trains);
+      if (match && shownMatchRef.current !== match.trainNumber) {
+        shownMatchRef.current = match.trainNumber;
+        setPendingMatch({
+          train: {
+            trainNumber: match.trainNumber,
+            trainName: match.trainName || match.name || match.trainNumber,
+          },
+          departureStation: nearestStation?.stationCode,
+          timestamp: new Date().toISOString(),
+          source: 'foreground',
+        });
+        setIsConfirmModalOpen(true);
+      }
+    }
+  }, [speed, isTracking, trackingStatus, liveBoard, checkBoarding, nearestStation]);
 
+  // ── Poll AsyncStorage for background-matched train result ──────────────────
+  useEffect(() => {
+    if (!isTracking) return;
 
+    const pollMatch = async () => {
+      try {
+        const raw = await AsyncStorage.getItem('matched_train_result');
+        if (!raw) return;
+        const result = JSON.parse(raw);
+        // Show confirmation only once per unique timestamp
+        if (result.timestamp && result.timestamp !== shownMatchRef.current) {
+          shownMatchRef.current = result.timestamp;
+          setPendingMatch({ ...result, source: 'background' });
+          setIsConfirmModalOpen(true);
+        }
+      } catch (e) {
+        console.warn('[TRACKING] Poll matched_train_result error:', e.message);
+      }
+    };
 
+    const interval = setInterval(pollMatch, 15000); // check every 15 s
+    pollMatch(); // check immediately on mount / tracking start
+    return () => clearInterval(interval);
+  }, [isTracking]);
+
+  // ── Confirmation handlers ──────────────────────────────────────────────────
+  const handleConfirmBoarding = async () => {
+    if (!pendingMatch) return;
+    setIsConfirmModalOpen(false);
+
+    const trip = {
+      trainName: pendingMatch.train.trainName || pendingMatch.train.trainNumber,
+      trainNumber: pendingMatch.train.trainNumber,
+      route: pendingMatch.departureStation || '—',
+      boardedAt: pendingMatch.timestamp,
+      source: pendingMatch.source,
+    };
+
+    try {
+      const stored = await AsyncStorage.getItem('trip_history');
+      const history = stored ? JSON.parse(stored) : [];
+      history.unshift(trip);
+      await AsyncStorage.setItem('trip_history', JSON.stringify(history.slice(0, 50)));
+      setTripHistory(prev => [trip, ...prev].slice(0, 50));
+      // Clear the pending match and the background result
+      await AsyncStorage.removeItem('matched_train_result');
+      setPendingMatch(null);
+      showToast(`Boarded ${trip.trainName} confirmed! 🚂`, 'success');
+    } catch (e) {
+      console.error('[TRACKING] Save trip failed:', e);
+    }
+  };
+
+  const handleDenyBoarding = async () => {
+    setIsConfirmModalOpen(false);
+    // Suppress this match; clear from storage so we don't re-prompt
+    await AsyncStorage.removeItem('matched_train_result').catch(() => {});
+    setPendingMatch(null);
+    showToast('Match dismissed. Continuing detection…', 'info');
+  };
 
   const handleAdminAuth = async () => {
     if (!passcodeInput) return;
@@ -242,7 +339,7 @@ export default function TrackingScreen() {
             </View>
 
             {isTracking && (
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={{ position: 'absolute', top: 20, right: 20, backgroundColor: '#18181b', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#27272a', zIndex: 10, alignItems: 'center' }}
                 onPress={() => setActiveTab('speed')}
               >
@@ -301,8 +398,8 @@ export default function TrackingScreen() {
                       </View>
                       <Text style={styles.trainDestText}>{train.toCode} · {train.expectedArrival || train.scheduledArrival}</Text>
                     </View>
-                    <TouchableOpacity 
-                      style={[styles.trainViewBtn, { width: 44, height: 44, borderRadius: 12 }]} 
+                    <TouchableOpacity
+                      style={[styles.trainViewBtn, { width: 44, height: 44, borderRadius: 12 }]}
                       onPress={() => { setViewingTrain(train); setIsTrainModalOpen(true); }}
                     >
                       <Ionicons name="eye" size={20} color="#fff" />
@@ -323,6 +420,9 @@ export default function TrackingScreen() {
           <View style={styles.tabContent}>
             <View style={styles.minimalCard}>
               <Text style={styles.minimalLabel}>JOURNEY HISTORY</Text>
+              {tripHistory.length === 0 && (
+                <Text style={{ color: '#52525b', fontSize: 13, marginTop: 8, textAlign: 'center' }}>No trips recorded yet.</Text>
+              )}
               {tripHistory.map((trip, i) => (
                 <View key={i} style={styles.historyItem}>
                   <View style={styles.historyInfo}>
@@ -366,11 +466,55 @@ export default function TrackingScreen() {
         </TouchableOpacity>
       </View>
 
-      <AdminPanel 
-        isOpen={isDrawerOpen} 
-        onClose={() => setIsDrawerOpen(false)} 
-        allStations={allStations} 
-        onRefreshStations={loadAllStations} 
+      {/* ── Train Boarding Confirmation Modal ──────────────────────────────── */}
+      <Modal
+        visible={isConfirmModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={handleDenyBoarding}
+      >
+        <View style={styles.confirmOverlay}>
+          <View style={styles.confirmContent}>
+            <View style={[styles.confirmIconContainer, { backgroundColor: '#6366f115' }]}>
+              <Ionicons name="train" size={32} color="#818cf8" />
+            </View>
+            <Text style={styles.confirmTitle}>Are you on this train?</Text>
+            {pendingMatch && (
+              <Text style={styles.confirmMessage}>
+                We detected movement consistent with{'\n'}
+                <Text style={{ color: '#fafafa', fontWeight: '700' }}>
+                  {pendingMatch.train?.trainName || pendingMatch.train?.trainNumber}
+                </Text>
+                {pendingMatch.train?.trainNumber && pendingMatch.train?.trainName
+                  ? `  (${pendingMatch.train.trainNumber})`
+                  : ''
+                }
+                {'\n\n'}departing from{' '}
+                <Text style={{ color: '#fafafa', fontWeight: '700' }}>
+                  {pendingMatch.departureStation || 'your station'}
+                </Text>.
+              </Text>
+            )}
+            <View style={styles.confirmActionRow}>
+              <TouchableOpacity style={styles.confirmCancelBtn} onPress={handleDenyBoarding}>
+                <Text style={styles.confirmCancelText}>Not me</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.confirmBtn, { backgroundColor: '#6366f1' }]}
+                onPress={handleConfirmBoarding}
+              >
+                <Text style={styles.confirmBtnText}>Yes, I'm on it!</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <AdminPanel
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        allStations={allStations}
+        onRefreshStations={loadAllStations}
         onSettingsSaved={loadSettings}
         showToast={showToast}
         onViewStation={(s) => {
@@ -378,29 +522,29 @@ export default function TrackingScreen() {
           setIsViewModalOpen(true);
         }}
       />
-      <AdminAuthModal 
-        isOpen={isAuthModalOpen} 
-        onClose={() => setIsAuthModalOpen(false)} 
-        passcodeInput={passcodeInput} 
-        setPasscodeInput={setPasscodeInput} 
-        onVerify={handleAdminAuth} 
-        error={authError} 
-        loading={authLoading} 
+      <AdminAuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        passcodeInput={passcodeInput}
+        setPasscodeInput={setPasscodeInput}
+        onVerify={handleAdminAuth}
+        error={authError}
+        loading={authLoading}
       />
-      <StationDetailsModal 
-        isOpen={isViewModalOpen} 
-        onClose={() => setIsViewModalOpen(false)} 
-        station={viewingStation} 
-        liveBoard={liveBoard} 
-        allStations={allStations} 
+      <StationDetailsModal
+        isOpen={isViewModalOpen}
+        onClose={() => setIsViewModalOpen(false)}
+        station={viewingStation}
+        liveBoard={liveBoard}
+        allStations={allStations}
       />
-      <TrainDetailsModal 
-        isOpen={isTrainModalOpen} 
-        onClose={() => setIsTrainModalOpen(false)} 
-        train={viewingTrain} 
-        loading={trainDetailLoading} 
-        routeData={trainDetailData} 
-        allStations={allStations} 
+      <TrainDetailsModal
+        isOpen={isTrainModalOpen}
+        onClose={() => setIsTrainModalOpen(false)}
+        train={viewingTrain}
+        loading={trainDetailLoading}
+        routeData={trainDetailData}
+        allStations={allStations}
       />
     </SafeAreaView>
   );
