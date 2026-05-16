@@ -88,7 +88,7 @@ async function seed() {
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
     }
-    
+
     console.log(`[SEED] 🌱 Successfully upserted ${stations.length} stations.`);
   } catch (err) {
     console.error('[SEED] ❌ Error:', err.message);

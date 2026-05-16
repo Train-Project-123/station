@@ -9,10 +9,10 @@ const STATION_CACHE_MAX_AGE = 12 * 60 * 60 * 1000; // 12 hours
 const TRAIN_DETAIL_TTL = 120000; // 2 minutes
 const API_TIMEOUT_MS = 8000; // 8 seconds
 
-// stationCode -> { numbers: Set, lastUpdated: timestamp }
+
 const stationTrainCache = new Map(); 
 const trainNameCache = new Map();    
-const trainDetailCache = new Map(); // trainNumber -> { data, timestamp }
+const trainDetailCache = new Map();
 
 // Periodic Cache Cleanup
 setInterval(() => {
@@ -231,7 +231,7 @@ router.get('/:code/live', async (req, res) => {
           fromCode: t.from_code,
           fromName: t.from_name,
           platform: t.platform,
-          expectedArrival: t.expected_arrival_time ? tsToHHMM(t.expected_arrival_time.getTime() / 1000) : null,
+          expectedArrival: t.expected_arrival || (t.expected_arrival_time ? tsToHHMM(t.expected_arrival_time.getTime() / 1000) : null),
           delayMinutes: t.delay_minutes,
           isApproaching: t.is_approaching,
           status: { hasArrived: t.arrived_time != null, hasDeparted: t.is_departed },
@@ -318,9 +318,13 @@ router.get('/:code/live', async (req, res) => {
             const sourceName = data.train?.sourceStationName || route[0]?.stationName;
             const isStarting = sourceCode?.toUpperCase().trim() === stationCode.trim();
 
-            let category = stop.actualDeparture ? 'GONE' : ((stop.actualArrival || isStarting) ? 'AT_STATION' : (isApproaching ? 'APPROACHING' : 'UPCOMING'));
+            const nowTs = Math.floor(Date.now() / 1000);
+            const hasDeparted = (stop.actualDeparture && stop.actualDeparture <= nowTs) || stationMatch?.status?.hasDeparted || stationMatch?.live?.hasDeparted;
+            const hasArrived = (stop.actualArrival && stop.actualArrival <= nowTs) || stationMatch?.status?.hasArrived || stationMatch?.live?.hasArrived;
+
+            let category = hasDeparted ? 'GONE' : ((hasArrived || isStarting) ? 'AT_STATION' : (isApproaching ? 'APPROACHING' : 'UPCOMING'));
             
-            // Fix Bug 4: Terminating trains move to GONE after arrival
+            // Fix: Terminating trains move to GONE after arrival
             if (category === 'AT_STATION' && isTerminating) {
               category = 'GONE';
             }
@@ -332,12 +336,12 @@ router.get('/:code/live', async (req, res) => {
               toName: data.train?.destinationStationName || route[route.length-1]?.stationName || destCode,
               fromCode: sourceCode,
               fromName: sourceName,
-            platform: stop.platform || stationMatch?.platform || null,
-            expectedArrival: addMinutesToTime(schedArr, delay) || schedArr,
-            delayMinutes: delay,
-            isApproaching,
-            status: { hasArrived: !!stop.actualArrival, hasDeparted: !!stop.actualDeparture },
-            _category: category,
+              platform: stop.platform || stationMatch?.platform || stationMatch?.live?.platform || null,
+              expectedArrival: addMinutesToTime(schedArr, delay) || schedArr,
+              delayMinutes: delay,
+              isApproaching,
+              status: { hasArrived: !!hasArrived, hasDeparted: !!hasDeparted },
+              _category: category,
             _scheduledDepartureTime: stop.scheduledDeparture ? new Date(stop.scheduledDeparture * 1000) : null,
             _expectedArrivalTime: (stop.actualArrival || stop.expectedArrival || stop.scheduledArrival) ? new Date((stop.actualArrival || stop.expectedArrival || stop.scheduledArrival) * 1000) : null,
             _arrivedTime: stop.actualArrival ? new Date(stop.actualArrival * 1000) : null,
@@ -345,6 +349,12 @@ router.get('/:code/live', async (req, res) => {
           };
         } catch (e) {
           if (!stationMatch) return null;
+          
+          // RailRadar Station Live Board response structure:
+          // stationMatch.schedule = { arrival, departure }
+          // stationMatch.status = { hasArrived, hasDeparted, ... }
+          // stationMatch.live = { arrivalDelayDisplay, ... }
+          
           const delay = parseDelayDisplay(stationMatch.live?.arrivalDelayDisplay);
           const destCode = stationMatch.toCode || stationMatch.train?.destinationStationCode;
           const isTerminating = destCode?.toUpperCase().trim() === stationCode.trim();
@@ -352,8 +362,15 @@ router.get('/:code/live', async (req, res) => {
           const sourceCode = stationMatch.fromCode || stationMatch.train?.sourceStationCode;
           const isStarting = sourceCode?.toUpperCase().trim() === stationCode.trim();
           
-          let category = stationMatch.live?.hasDeparted ? 'GONE' : ((stationMatch.live?.hasArrived || isStarting) ? 'AT_STATION' : 'UPCOMING');
+          // Fix: hasDeparted/hasArrived are in stationMatch.status, not stationMatch.live
+          const hasDeparted = stationMatch.status?.hasDeparted || stationMatch.live?.hasDeparted;
+          const hasArrived = stationMatch.status?.hasArrived || stationMatch.live?.hasArrived;
+
+          let category = hasDeparted ? 'GONE' : ((hasArrived || isStarting) ? 'AT_STATION' : 'UPCOMING');
           if (category === 'AT_STATION' && isTerminating) category = 'GONE';
+
+          const schedArrival = stationMatch.schedule?.arrival || stationMatch.scheduledArrival;
+          const schedDeparture = stationMatch.schedule?.departure || stationMatch.scheduledDeparture;
 
           return {
             trainNumber: num,
@@ -362,17 +379,17 @@ router.get('/:code/live', async (req, res) => {
             toName: stationMatch.toName || stationMatch.train?.destinationStationName || destCode,
             fromCode: sourceCode,
             fromName: stationMatch.fromName || stationMatch.train?.sourceStationName || sourceCode,
-            platform: stationMatch.platform,
-            expectedArrival: stationMatch.expectedArrival || stationMatch.scheduledArrival,
+            platform: stationMatch.platform || stationMatch.live?.platform,
+            expectedArrival: schedArrival || schedDeparture,
             delayMinutes: delay,
             isApproaching: false,
-            status: { hasArrived: !!stationMatch.live?.hasArrived, hasDeparted: !!stationMatch.live?.hasDeparted },
+            status: { hasArrived: !!hasArrived, hasDeparted: !!hasDeparted },
             _category: category,
             _isStale: true,
             _scheduledDepartureTime: null,
             _expectedArrivalTime: null,
-            _arrivedTime: stationMatch.live?.hasArrived ? new Date() : null,
-            _departedAt: stationMatch.live?.hasDeparted ? new Date() : null
+            _arrivedTime: hasArrived ? new Date() : null,
+            _departedAt: hasDeparted ? new Date() : null
           };
         }
       }));
@@ -396,6 +413,7 @@ router.get('/:code/live', async (req, res) => {
         category: t._category,
         scheduled_departure_time: t._scheduledDepartureTime,
         expected_arrival_time: t._expectedArrivalTime,
+        expected_arrival: t.expectedArrival,
         arrived_time: t._arrivedTime,
         is_departed: !!t.status?.hasDeparted,
         departed_at: t._departedAt

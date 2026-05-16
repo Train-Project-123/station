@@ -41,6 +41,7 @@ const StationBoardSchema = new mongoose.Schema(
         delay_minutes: Number,
         is_approaching: Boolean,
         category: String,
+        expected_arrival: String,
       },
     ],
     last_updated_at: {

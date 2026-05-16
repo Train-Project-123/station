@@ -41,6 +41,35 @@ const fmt12h = (timeStr) => {
   } catch { return null; }
 };
 
+const TrainRow = ({ train, onView, isGone }) => (
+  <View style={styles.trainRowMinimal}>
+    <View style={styles.trainRowLeft}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Text style={styles.trainNumText}>{train.trainNumber}</Text>
+        {train.isApproaching && (
+          <View style={{ backgroundColor: '#3b82f6', paddingHorizontal: 4, borderRadius: 4 }}>
+            <Text style={{ color: '#fff', fontSize: 8, fontWeight: '800' }}>APP</Text>
+          </View>
+        )}
+      </View>
+      <Text style={styles.trainDestText}>
+        {train.toCode} · {fmt12h(train.expectedArrival || train.scheduledArrival) || train.expectedArrival || train.scheduledArrival}
+      </Text>
+    </View>
+    <View style={styles.trainRowRight}>
+      {train.platform && (
+        <Text style={[styles.liveBoardPlatform, { marginBottom: 4 }]}>PF {train.platform}</Text>
+      )}
+      <TouchableOpacity
+        style={[styles.trainViewBtn, isGone && { opacity: 0.6 }]}
+        onPress={onView}
+      >
+        <Ionicons name="eye" size={18} color="#fff" />
+      </TouchableOpacity>
+    </View>
+  </View>
+);
+
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function TrackingScreen() {
   const { showToast } = useToast();
@@ -314,8 +343,12 @@ export default function TrackingScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <Text style={styles.appTitle}>Thirakkundo</Text>
-            <Text style={styles.appSubtitle}>Smart Auto-Detection</Text>
+            <Text style={styles.appTitle}>
+              {trackingStatus === TRACKING_STATUS.INSIDE ? nearestStation?.stationName : 'Thirakkundo'}
+            </Text>
+            <Text style={styles.appSubtitle}>
+              {trackingStatus === TRACKING_STATUS.INSIDE ? 'Station Active' : 'Smart Auto-Detection'}
+            </Text>
           </View>
           <TouchableOpacity style={styles.menuBtn} onPress={() => setIsAuthModalOpen(true)}>
             <Ionicons name="grid" size={20} color="#fafafa" />
@@ -347,22 +380,8 @@ export default function TrackingScreen() {
                 <Text style={{ color: '#71717a', fontSize: 9, fontWeight: '700' }}>KM/H</Text>
               </TouchableOpacity>
             )}
-            {isTracking && (
-              <View style={[styles.minimalCard, { alignItems: 'center', paddingVertical: 30 }]}>
-                <Text style={styles.minimalLabel}>CURRENT SPEED</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-                  <Text style={{ fontSize: 64, fontWeight: '900', color: '#fff' }}>{Math.round(speed || 0)}</Text>
-                  <Text style={{ fontSize: 18, fontWeight: '700', color: '#71717a', marginLeft: 8 }}>KM/H</Text>
-                </View>
-                {speed > 20 && (
-                  <View style={{ backgroundColor: '#10b98122', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 100, marginTop: 10 }}>
-                    <Text style={{ color: '#10b981', fontSize: 12, fontWeight: '800' }}>DETECTING MOTION</Text>
-                  </View>
-                )}
-              </View>
-            )}
 
-            {nearestStation && (
+            {isTracking && trackingStatus === TRACKING_STATUS.OUTSIDE && nearestStation && (
               <View style={styles.minimalCard}>
                 <View style={styles.minimalRow}>
                   <View>
@@ -377,44 +396,85 @@ export default function TrackingScreen() {
               </View>
             )}
 
+            {isTracking && (
+              <View style={[styles.minimalCard, { alignItems: 'center', paddingVertical: 20 }]}>
+                <Text style={styles.minimalLabel}>CURRENT SPEED</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                  <Text style={{ fontSize: 48, fontWeight: '900', color: '#fff' }}>{Math.round(speed || 0)}</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#71717a', marginLeft: 8 }}>KM/H</Text>
+                </View>
+                {speed > 20 && (
+                  <View style={{ backgroundColor: '#10b98122', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 100, marginTop: 10 }}>
+                    <Text style={{ color: '#10b981', fontSize: 12, fontWeight: '800' }}>DETECTING MOTION</Text>
+                  </View>
+                )}
+              </View>
+            )}
+
             {liveBoard && (
               <View style={styles.minimalCard}>
                 <View style={styles.minimalHeader}>
-                  <Text style={styles.minimalLabel}>LIVE DEPARTURES</Text>
+                  <Text style={styles.minimalLabel}>
+                    {trackingStatus === TRACKING_STATUS.INSIDE ? 'TRAINS AT STATION' : 'LIVE DEPARTURES'}
+                  </Text>
                   <TouchableOpacity onPress={() => refreshLiveBoard()}>
                     <Ionicons name="refresh" size={14} color="#71717a" />
                   </TouchableOpacity>
                 </View>
-                {liveBoard.trains.slice(0, 5).map((train, idx) => (
-                  <View key={idx} style={styles.trainRowMinimal}>
-                    <View style={styles.trainRowLeft}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={styles.trainNumText}>{train.trainNumber}</Text>
-                        {train.isApproaching && (
-                          <View style={{ backgroundColor: '#3b82f6', paddingHorizontal: 4, borderRadius: 4 }}>
-                            <Text style={{ color: '#fff', fontSize: 8, fontWeight: '800' }}>APP</Text>
-                          </View>
-                        )}
+
+                {trackingStatus === TRACKING_STATUS.INSIDE ? (
+                  <View>
+                    {/* At Station */}
+                    {liveBoard.atStation?.length > 0 && (
+                      <View style={{ marginBottom: 16 }}>
+                        <Text style={[styles.subSectionLabel, { marginTop: 0 }]}>At Station</Text>
+                        {liveBoard.atStation.map((train, idx) => (
+                          <TrainRow key={`at-${idx}`} train={train} onView={() => { setViewingTrain(train); setIsTrainModalOpen(true); }} />
+                        ))}
                       </View>
-                      <Text style={styles.trainDestText}>{train.toCode} · {train.expectedArrival || train.scheduledArrival}</Text>
-                    </View>
-                    <TouchableOpacity
-                      style={[styles.trainViewBtn, { width: 44, height: 44, borderRadius: 12 }]}
-                      onPress={() => { setViewingTrain(train); setIsTrainModalOpen(true); }}
-                    >
-                      <Ionicons name="eye" size={20} color="#fff" />
-                    </TouchableOpacity>
+                    )}
+
+                    {/* Upcoming */}
+                    {liveBoard.upcoming?.length > 0 && (
+                      <View style={{ marginBottom: 16 }}>
+                        <Text style={styles.subSectionLabel}>Upcoming</Text>
+                        {liveBoard.upcoming.slice(0, 5).map((train, idx) => (
+                          <TrainRow key={`up-${idx}`} train={train} onView={() => { setViewingTrain(train); setIsTrainModalOpen(true); }} />
+                        ))}
+                      </View>
+                    )}
+
+                    {/* Gone */}
+                    {liveBoard.gone?.length > 0 && (
+                      <View>
+                        <Text style={styles.subSectionLabel}>Recently Departed</Text>
+                        {liveBoard.gone.slice(0, 3).map((train, idx) => (
+                          <TrainRow key={`gone-${idx}`} train={train} onView={() => { setViewingTrain(train); setIsTrainModalOpen(true); }} isGone />
+                        ))}
+                      </View>
+                    )}
                   </View>
-                ))}
-                {liveBoard.trains.length > 5 && (
+                ) : (
+                  /* Outside view: simple list */
+                  liveBoard.trains.slice(0, 5).map((train, idx) => (
+                    <TrainRow key={`simple-${idx}`} train={train} onView={() => { setViewingTrain(train); setIsTrainModalOpen(true); }} />
+                  ))
+                )}
+
+                {(liveBoard.trains.length > 5 || (trackingStatus === TRACKING_STATUS.INSIDE && liveBoard.trains.length > 0)) && (
                   <TouchableOpacity onPress={() => { setViewingStation(nearestStation); setIsViewModalOpen(true); }} style={{ marginTop: 10, alignItems: 'center' }}>
-                    <Text style={[styles.moreText, { color: '#818cf8', fontWeight: '700' }]}>See all trains</Text>
+                    <Text style={[styles.moreText, { color: '#818cf8', fontWeight: '700' }]}>See full station board</Text>
                   </TouchableOpacity>
+                )}
+                
+                {liveBoard.trains.length === 0 && !liveBoardLoading && (
+                  <Text style={{ color: '#52525b', fontSize: 13, textAlign: 'center', paddingVertical: 10 }}>No trains found at this time.</Text>
                 )}
               </View>
             )}
           </View>
         )}
+
 
         {activeTab === 'history' && (
           <View style={styles.tabContent}>
