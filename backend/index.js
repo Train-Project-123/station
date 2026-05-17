@@ -36,24 +36,22 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/stations', stationRoutes);
 app.use('/api/trains', trainRoutes);
 app.use('/api/history', historyRoutes);
 app.use('/api/settings', settingsRoutes);
 
-// ─── 404 Handler ──────────────────────────────────────────────────────────────
+
 app.use((req, res) => {
   res.status(404).json({ success: false, message: `Route ${req.path} not found.` });
 });
 
-// ─── Error Handler ────────────────────────────────────────────────────────────
+
 app.use((err, req, res, next) => {
   console.error('[SERVER ERROR]', err.message);
   res.status(500).json({ success: false, message: 'Internal server error.' });
 });
 
-// ─── MongoDB Connection ───────────────────────────────────────────────────────
 const connectDB = async () => {
   try {
     await mongoose.connect(MONGO_URI);
