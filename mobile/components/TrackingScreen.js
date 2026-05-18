@@ -225,10 +225,13 @@ export default function TrackingScreen() {
     if (!pendingMatch) return;
     setIsConfirmModalOpen(false);
 
+    const station = allStations.find(s => s.stationCode === pendingMatch.departureStation);
+    const stationName = station?.stationName || pendingMatch.departureStation || '—';
+
     const trip = {
       trainName: pendingMatch.train.trainName || pendingMatch.train.trainNumber,
       trainNumber: pendingMatch.train.trainNumber,
-      route: pendingMatch.departureStation || '—',
+      route: stationName,
       boardedAt: pendingMatch.timestamp,
       source: pendingMatch.source,
     };
@@ -239,7 +242,7 @@ export default function TrackingScreen() {
       history.unshift(trip);
       await AsyncStorage.setItem('trip_history', JSON.stringify(history.slice(0, 50)));
       setTripHistory(prev => [trip, ...prev].slice(0, 50));
-      // Clear the pending match and the background result
+
       await AsyncStorage.removeItem('matched_train_result');
       setPendingMatch(null);
       showToast(`Boarded ${trip.trainName} confirmed! 🚂`, 'success');
@@ -250,7 +253,7 @@ export default function TrackingScreen() {
 
   const handleDenyBoarding = async () => {
     setIsConfirmModalOpen(false);
-    // Suppress this match; clear from storage so we don't re-prompt
+
     await AsyncStorage.removeItem('matched_train_result').catch(() => {});
     setPendingMatch(null);
     showToast('Match dismissed. Continuing detection…', 'info');
@@ -551,7 +554,7 @@ export default function TrackingScreen() {
                 }
                 {'\n\n'}departing from{' '}
                 <Text style={{ color: '#fafafa', fontWeight: '700' }}>
-                  {pendingMatch.departureStation || 'your station'}
+                  {allStations.find(s => s.stationCode === pendingMatch.departureStation)?.stationName || pendingMatch.departureStation || 'your station'}
                 </Text>.
               </Text>
             )}
