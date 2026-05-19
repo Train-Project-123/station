@@ -349,11 +349,7 @@ router.get('/:code/live', async (req, res) => {
           };
         } catch (e) {
           if (!stationMatch) return null;
-          
-          // RailRadar Station Live Board response structure:
-          // stationMatch.schedule = { arrival, departure }
-          // stationMatch.status = { hasArrived, hasDeparted, ... }
-          // stationMatch.live = { arrivalDelayDisplay, ... }
+      
           
           const delay = parseDelayDisplay(stationMatch.live?.arrivalDelayDisplay);
           const destCode = stationMatch.toCode || stationMatch.train?.destinationStationCode;
