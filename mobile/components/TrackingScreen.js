@@ -216,7 +216,7 @@ export default function TrackingScreen() {
     };
 
     const interval = setInterval(pollMatch, 15000); // check every 15 s
-    pollMatch(); // check immediately on mount / tracking start
+    pollMatch(); 
     return () => clearInterval(interval);
   }, [isTracking]);
 
